@@ -1,0 +1,23 @@
+{
+  "name": "nutri-mcp-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NutriMCP - Multi-source nutrition MCP server",
+  "author": "NutriMCP Team",
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "clean": "pnpm -r clean",
+    "docs:dev": "pnpm --filter @nutri-mcp/docs dev",
+    "docs:build": "pnpm --filter @nutri-mcp/docs build",
+    "docs:preview": "pnpm --filter @nutri-mcp/docs preview"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

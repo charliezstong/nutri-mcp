@@ -1,0 +1,69 @@
+{
+  "name": "nutri-mcp",
+  "version": "1.0.0",
+  "description": "Multi-source nutrition MCP server - Open Food Facts, USDA FoodData Central, and Nutritionix",
+  "author": "NutriMCP Team",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "nutri-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "^3.1.0",
+    "eslint": "^9.0.0",
+    "msw": "^2.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "nutrition",
+    "food",
+    "open-food-facts",
+    "usda",
+    "nutritionix",
+    "ai",
+    "claude",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nutrimcp/nutri-mcp.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://nutrimcp.com",
+  "bugs": {
+    "url": "https://github.com/nutrimcp/nutri-mcp/issues"
+  }
+}
