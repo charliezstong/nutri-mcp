@@ -1,4 +1,4 @@
-import { RATE_LIMIT_MAX_WAIT_MS, TIMEOUTS } from '../config/constants.js';
+import { RATE_LIMIT_MAX_WAIT_MS } from '../config/constants.js';
 import { getEnv } from '../config/env.js';
 import { ApiError, ProviderUnavailableError } from '../errors/index.js';
 import { getLogger } from '../transport/logger.js';
@@ -56,7 +56,7 @@ export async function fetchJson<T>(url: string, options: FetchJsonOptions & { al
 export async function fetchJson<T>(url: string, options: FetchJsonOptions): Promise<T>;
 export async function fetchJson<T>(url: string, options: FetchJsonOptions): Promise<T | null> {
   const { provider, endpoint = 'all', init = {}, allowNotFound = false } = options;
-  const timeoutMs = options.timeoutMs ?? Math.max(getEnv().REQUEST_TIMEOUT, TIMEOUTS.default);
+  const timeoutMs = options.timeoutMs ?? getEnv().REQUEST_TIMEOUT;
   const breaker = getCircuitBreaker(provider);
   const label = PROVIDER_LABELS[provider];
 

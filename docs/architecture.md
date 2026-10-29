@@ -65,7 +65,7 @@ An LRU cache (`CACHE_TTL`) stores products, searches, prices, recalls, the addit
 1. Create `providers/<name>/` with a client extending `BaseProvider`, a mapper to `Product`, and raw types.
 2. Override `isConfigured()` if it needs credentials; implement `getProductByBarcode`, `searchProducts` and `supports`.
 3. Call upstream only through `this.fetchWithResilience(url, rateLimitKey, { allowNotFound, init })`.
-4. Add the provider to `CIRCUIT_BREAKER` and `RATE_LIMITS` in `config/constants.ts`, and to the provider list in `services/product.service.ts`.
+4. Register the name everywhere providers are enumerated: `CIRCUIT_BREAKER` and `RATE_LIMITS` in `config/constants.ts`, `PROVIDER_LABELS` in `resilience/http.ts`, the `DataSource` type (`types/common.types.ts`), the `ProductProviderName` union in `providers/base.provider.ts`, and the provider list in `services/product.service.ts`.
 5. Record a fixture in `tests/fixtures/`, add a route in `tests/helpers/fetch-stub.ts` and mapper tests.
 
 ## Testing

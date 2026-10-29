@@ -1,345 +1,146 @@
 # Use Cases
 
-Real-world examples of Nutri-MCP in action.
+Examples of what Nutri-MCP is good at, from chat prompts to code. Tool names and parameters are documented in the [Tools Reference](/tools/overview).
 
-## Mastra: AI Dietitian Agent
+## Ask in Claude Code or Claude Desktop
 
-Build a nutrition assistant using [Mastra](https://mastra.ai), the TypeScript AI framework.
+After [adding the server](/guide/getting-started), plain questions are enough. The model picks the tools.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Mastra Agent                              │
-│                                                                  │
-│   User: "Is this cereal good for my diabetic diet?"             │
-│          │                                                       │
-│          ▼                                                       │
-│   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐    │
-│   │   Analyze    │────▶│  Nutri-MCP    │────▶│   Respond    │    │
-│   │   Intent     │     │   Tools      │     │   w/ Data    │    │
-│   └──────────────┘     └──────────────┘     └──────────────┘    │
-│                              │                                   │
-│                        getProduct()                              │
-│                        analyzeNutrition()                        │
-│                        getDietCompatibility()                    │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+| You ask | Tools typically used |
+|---------|----------------------|
+| "What's the nutrition for barcode 3017620422003?" | `getProductByBarcode`, `analyzeNutrition` |
+| "Why does Prince get a Nutri-Score E?" | `searchProducts`, `getNutriScore` |
+| "Is 3017620422003 vegan? Explain the evidence." | `checkDietCompliance` |
+| "I'm allergic to wheat and peanuts. Is 7622210449283 safe?" | `checkMultipleAllergens`, `getCrossContaminationRisk` |
+| "Find a less processed chocolate spread with a better Nutri-Score." | `findHealthierAlternative`, `searchProducts` (`nutriScoreMax`, `novaMax`) |
+| "Which of these has the least sugar: 3017620422003, 7622210449283?" | `rankByNutrient` |
+| "What does Nutella cost in France, and is it cheaper than last year?" | `getPriceStats` (`country: "FR"`), `getPriceHistory` |
+| "Any discounted prices reported in EUR recently?" | `findDeals` |
+| "Breakfast is 20 g of Nutella and 40 g of Prince. How many calories?" | `analyzeMeal` |
+| "Are there FDA recalls for peanut butter that are still ongoing?" | `checkRecalls` (`ongoingOnly: true`) |
+| "How complete is the Open Food Facts data for 7622210449283?" | `qualityCheck`, `getProductInsights` |
 
-### Setup
+In hosts that render [MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/), `getProductByBarcode` and `compareProducts` also display an interactive product card or comparison table.
 
-```bash
-npm install @mastra/core @mastra/mcp @ai-sdk/anthropic
-```
+## Use the built-in prompts
 
-### Agent Code
+The server ships six prompts that guide the model through a multi-tool workflow:
+
+| Prompt | Arguments | Workflow |
+|--------|-----------|----------|
+| `analyze-product` | `barcode` | Full analysis: scores, macros, %DV, allergens, NOVA, additives, recommendation |
+| `compare-products` | `barcodes` (comma-separated) | Nutrients, scores, allergens and price per kg/L side by side |
+| `find-alternatives` | `barcode`, optional `category` | Healthier options in the same or a given category |
+| `check-allergens` | `barcode`, `allergens` (comma-separated ids) | Allergens, cross-contamination, traces and recalls, with a SAFE / UNSAFE / UNCERTAIN verdict |
+| `plan-meal` | `barcodes` | Calories, macros, gaps and cost of a meal |
+| `check-diet` | `barcodes`, `diet` | Diet compliance for a shopping list |
+
+In Claude Code, prompts are available as slash commands under `/mcp`.
+
+## Call tools from TypeScript (stdio)
+
+Any MCP client can launch the server as a subprocess. With the official SDK (`@modelcontextprotocol/client` v2):
 
 ```typescript
-// src/agents/dietitian.ts
-import { Agent } from "@mastra/core/agent";
-import { MCPClient } from "@mastra/mcp";
-import { anthropic } from "@ai-sdk/anthropic";
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
-// Connect to Nutri-MCP
-const nutritionClient = new MCPClient({
-  servers: {
-    nutrition: {
-      command: "npx",
-      args: ["nutri-mcp"],
-      env: {
-        USDA_API_KEY: process.env.USDA_API_KEY,
-      },
-    },
-  },
+const client = new Client({ name: 'nutrition-script', version: '1.0.0' });
+await client.connect(new StdioClientTransport({
+  command: 'npx',
+  args: ['-y', 'nutri-mcp'],
+  env: { ...process.env, LOG_LEVEL: 'warn' },
+}));
+
+const { structuredContent } = await client.callTool({
+  name: 'checkDietCompliance',
+  arguments: { barcode: '3017620422003', diet: 'vegan' },
 });
+console.log(structuredContent);
+// { product: {...}, diet: 'vegan', compliant: false, verdict: 'not_compliant', violations: [...], ... }
 
-// Create the agent
-export const dietitian = new Agent({
-  name: "Dietitian",
-  model: anthropic("claude-sonnet-4-20250514"),
-  instructions: `You are a registered dietitian assistant. Help users:
-    - Understand nutritional content of foods
-    - Check products against dietary restrictions
-    - Find healthier alternatives
-    - Plan balanced meals
-
-    Always use the nutrition tools to get accurate data.
-    Be specific about nutrients and percentages.
-    Warn about allergens when relevant.`,
-  tools: await nutritionClient.getTools(),
-});
+await client.close();
 ```
 
-### Usage
+For a source checkout, use `command: 'node'` and `args: ['/absolute/path/to/nutri-mcp/packages/core/dist/index.js']`.
+
+Every tool returns `structuredContent` that matches its `outputSchema`, so results can be used directly without parsing text. Failed calls return `isError: true` with a message in `content[0].text`.
+
+## Check a menu against a customer's allergens
+
+A meal-prep or catering backend can validate a list of products. Allergen ids are `gluten`, `wheat`, `dairy`, `eggs`, `fish`, `shellfish`, `mollusks`, `tree_nuts`, `peanuts`, `soy`, `celery`, `mustard`, `sesame`, `sulfites` and `lupin`.
 
 ```typescript
-// Simple query
-const response = await dietitian.generate(
-  "What's the sugar content in Nutella? Is it ok for diabetics?"
-);
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
-// With streaming
-const stream = await dietitian.stream(
-  "Compare these cereals for a heart-healthy diet: " +
-  "Cheerios (016000275287) vs Frosted Flakes (038000001062)"
-);
+const client = new Client({ name: 'menu-checker', version: '1.0.0' });
+await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:3000/mcp')));
 
-for await (const chunk of stream) {
-  process.stdout.write(chunk.text);
-}
-```
-
-### Example Conversation
-
-```
-User: I have celiac disease. Is product 5000159407236 safe for me?
-
-Agent: Let me check that product for gluten content.
-
-[Calls checkAllergens with barcode and ["gluten"]]
-
-This product is NOT safe for celiac disease. It contains:
-- Wheat flour (main ingredient)
-- Barley malt extract
-
-Would you like me to find gluten-free alternatives in the same category?
-```
-
----
-
-## Claude Code: Personal Nutrition Lookup
-
-Direct integration for ad-hoc nutrition queries.
-
-### Setup
-
-```bash
-claude mcp add nutri-mcp -- npx nutri-mcp
-```
-
-### Example Prompts
-
-**Product lookup:**
-> "What's the Nutri-Score for barcode 3017620422003?"
-
-**Diet check:**
-> "Is product 5449000000996 keto-friendly?"
-
-**Comparison:**
-> "Compare the protein content of Greek yogurt vs regular yogurt"
-
-**Meal planning:**
-> "Analyze this meal: 150g chicken breast, 200g brown rice, 100g broccoli"
-
----
-
-## Recipe App: Nutrition Calculator
-
-Backend service for a recipe application.
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Recipe App    │────▶│    Nutri-MCP     │────▶│   Recipe Card   │
-│   (Next.js)     │     │   HTTP Mode     │     │   w/ Nutrition  │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-```
-
-### Start Server
-
-```bash
-TRANSPORT=http HTTP_PORT=3000 npx nutri-mcp
-```
-
-### API Integration
-
-```typescript
-// lib/nutrition.ts
-async function analyzeRecipe(ingredients: Ingredient[]) {
-  const response = await fetch("http://localhost:3000/mcp", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: Date.now(),
-      method: "tools/call",
-      params: {
-        name: "analyzeRecipe",
-        arguments: {
-          ingredients: ingredients.map((i) => ({
-            barcode: i.barcode,
-            grams: i.grams,
-          })),
-          servings: 4,
-        },
-      },
-    }),
-  });
-
-  const { result } = await response.json();
-  return result;
-}
-```
-
-### Response
-
-```json
-{
-  "totalNutrition": {
-    "calories": 1850,
-    "protein": 95,
-    "carbs": 180,
-    "fat": 45
-  },
-  "perServing": {
-    "calories": 462,
-    "protein": 24
-  },
-  "allergens": ["gluten", "milk"],
-  "nutriScore": "B"
-}
-```
-
----
-
-## Grocery App: Barcode Scanner
-
-Mobile app that scans barcodes and shows nutrition info.
-
-```typescript
-// React Native with Nutri-MCP HTTP endpoint
-
-async function onBarcodeScan(barcode: string) {
-  const product = await fetch("http://api.yourapp.com/nutrition/product", {
-    method: "POST",
-    body: JSON.stringify({ barcode }),
-  }).then((r) => r.json());
-
-  // Display product card
-  return {
-    name: product.name,
-    brand: product.brand,
-    nutriScore: product.nutriScore.grade,
-    calories: product.nutrients.find((n) => n.id === "energy")?.value,
-    allergens: product.allergens,
-  };
-}
-```
-
----
-
-## Meal Prep Service: Allergen Checker
-
-Validate meal prep menus against customer allergen profiles.
-
-```typescript
-async function validateMenu(
-  menuItems: string[], // barcodes
-  customerAllergens: string[]
-) {
-  const results = await Promise.all(
-    menuItems.map(async (barcode) => {
-      const check = await callTool("checkAllergens", {
-        barcode,
-        allergens: customerAllergens,
-      });
-      return { barcode, ...check };
-    })
-  );
-
-  const unsafe = results.filter((r) => !r.safe);
-
-  if (unsafe.length > 0) {
-    return {
-      approved: false,
-      conflicts: unsafe.map((u) => ({
-        product: u.barcode,
-        allergens: u.contains,
-      })),
+async function checkMenu(barcodes: string[], allergens: string[]) {
+  const results = [];
+  for (const barcode of barcodes) {
+    const result = await client.callTool({
+      name: 'checkMultipleAllergens',
+      arguments: { barcode, allergens },
+    });
+    if (result.isError) {
+      results.push({ barcode, safe: false, reason: 'not found or lookup failed' });
+      continue;
+    }
+    const out = result.structuredContent as {
+      overallSafe: boolean;
+      allergensFound: string[];
+      dataAvailable: boolean;
     };
+    // No allergen data on the label record means "unknown", not "safe"
+    results.push({ barcode, safe: out.overallSafe && out.dataAvailable, allergensFound: out.allergensFound });
   }
-
-  return { approved: true };
+  return results;
 }
+
+console.log(await checkMenu(['3017620422003', '7622210449283'], ['wheat', 'peanuts']));
+await client.close();
 ```
 
----
+This assumes the server runs in [HTTP mode](/guide/http-transport) (`TRANSPORT=http`). A product counts as unsafe when the allergen is declared, listed in traces or "may contain", or implied (wheat is inferred from a gluten declaration).
 
-## Health Dashboard: Daily Tracking
+::: warning
+Label data can be incomplete. Treat these answers as a first check and always confirm on the package for severe allergies.
+:::
 
-Track daily nutrition intake with real-time analysis.
+## Cost and nutrition of a meal
+
+`analyzeMeal` adds up nutrients for portions in grams; `calculateMealCost` estimates the cost from crowdsourced median prices in one currency:
 
 ```typescript
-// Track consumed items
-const dailyLog = [];
+const meal = { barcodes: ['3017620422003', '7622210449283'], grams: [20, 40] };
 
-async function logFood(barcode: string, grams: number) {
-  const nutrition = await callTool("calculateServingNutrition", {
-    barcode,
-    servingGrams: grams,
-  });
+const nutrition = await client.callTool({ name: 'analyzeMeal', arguments: meal });
+const cost = await client.callTool({ name: 'calculateMealCost', arguments: { ...meal, currency: 'EUR' } });
 
-  dailyLog.push({
-    time: new Date(),
-    barcode,
-    grams,
-    nutrients: nutrition.nutrients,
-  });
-
-  // Calculate daily totals
-  const totals = aggregateNutrients(dailyLog);
-
-  // Get daily value percentages
-  return {
-    consumed: totals,
-    remaining: calculateRemaining(totals),
-    warnings: checkExcesses(totals),
-  };
-}
+console.log(nutrition.structuredContent); // totalGrams, totalCalories, totals, macros, ...
+console.log(cost.structuredContent);      // currency, items, estimatedTotalCost, itemsWithoutPrices, ...
 ```
 
----
+For a whole day, `analyzeMealPlan` takes named meals and a `targetCalories` value.
 
-## Multi-Agent: Nutrition + Fitness
+## Monitor recalls
 
-Combine Nutri-MCP with other MCP servers for a complete health assistant.
+`checkRecalls` searches openFDA food enforcement reports (US only, updated weekly) by barcode and/or text. A scheduled job can flag new ongoing recalls for products you sell:
 
 ```typescript
-import { MCPClient } from "@mastra/mcp";
-import { Agent } from "@mastra/core/agent";
-
-const clients = new MCPClient({
-  servers: {
-    nutrition: {
-      command: "npx",
-      args: ["nutri-mcp"],
-    },
-    fitness: {
-      command: "npx",
-      args: ["fitness-mcp"], // hypothetical
-    },
-    calendar: {
-      command: "npx",
-      args: ["@anthropic/mcp-google-calendar"],
-    },
-  },
+const result = await client.callTool({
+  name: 'checkRecalls',
+  arguments: { query: 'peanut butter', ongoingOnly: true, limit: 10 },
 });
-
-const healthCoach = new Agent({
-  name: "Health Coach",
-  model: anthropic("claude-sonnet-4-20250514"),
-  instructions: `You're a holistic health coach with access to:
-    - Nutrition data (food, calories, allergens)
-    - Fitness tracking (workouts, steps)
-    - Calendar (meal planning, workout scheduling)
-
-    Help users balance nutrition with exercise goals.`,
-  tools: await clients.getTools(),
-});
+const { recalls } = result.structuredContent as {
+  recalls: { recallNumber: string; classification: string; reason: string; matchedBy: 'barcode' | 'text' }[];
+};
+for (const r of recalls) console.log(r.recallNumber, r.classification, r.reason);
 ```
 
----
+Text matches are possible matches, not certain ones (`matchedBy: "text"`).
 
-## Sources
+## Combine with other MCP servers
 
-- [Mastra Documentation](https://mastra.ai/docs)
-- [Mastra MCP Guide](https://mastra.ai/docs/mcp/overview)
-- [Model Context Protocol](https://modelcontextprotocol.io)
+Because Nutri-MCP is a standard MCP server, a host can use it next to other servers, for example a calendar for meal planning or a notes server for a shopping list. Each server is registered separately in the host (`claude mcp add ...` or the host's config file) and the model chooses tools from all of them.

@@ -1,209 +1,123 @@
 # Resilience
 
-Nutri-MCP includes a resilience layer to handle API failures, rate limits, and network issues.
+Every upstream call (Open Food Facts, Robotoff, Open Prices, USDA, Nutritionix, openFDA) goes through one function, `fetchJson()` in `src/resilience/http.ts`. It combines a circuit breaker, a token-bucket rate limiter, a timeout and retries. Responses are cached by the callers in a shared LRU cache.
 
-## Components
+All settings are constants in `src/config/constants.ts`; only the cache size, caching on/off and the timeout are configurable through [environment variables](/guide/configuration).
 
-### LRU Cache
-
-In-memory cache with Least Recently Used eviction:
-
-```typescript
-const cache = new LRUCache(1000); // Max 1000 entries
-
-// Set with TTL by type
-cache.set('product:123', product, 'product');  // 1 hour TTL
-cache.set('search:chocolate', results, 'search'); // 30 min TTL
-
-// Get (returns null if expired or missing)
-const cached = cache.get<Product>('product:123');
-
-// Clear all
-cache.clear();
-```
-
-#### TTL Configuration
-
-| Type | Default TTL | Environment Variable |
-|------|-------------|---------------------|
-| product | 1 hour | `CACHE_TTL_PRODUCT` |
-| search | 30 minutes | `CACHE_TTL_SEARCH` |
-| nutrition | 1 hour | `CACHE_TTL_NUTRITION` |
-
-### Circuit Breaker
-
-Prevents cascading failures when APIs are down:
+## Request pipeline
 
 ```
-State Transitions:
-
-     ┌──────────────────────────────────────────┐
-     │                                          │
-     ▼                                          │
-┌─────────┐  failure >= threshold  ┌─────────┐  │
-│ CLOSED  │───────────────────────▶│  OPEN   │  │
-└─────────┘                        └─────────┘  │
-     ▲                                  │       │
-     │                          timeout │       │
-     │                                  ▼       │
-     │        success           ┌───────────┐  │
-     └──────────────────────────│ HALF_OPEN │──┘
-                   failure      └───────────┘
+fetchJson(url, { provider, endpoint, allowNotFound, init, timeoutMs })
+  │
+  ├─ 1. Circuit breaker for `provider` open?      → ProviderUnavailableError
+  ├─ 2. Wait up to 8 s for a rate-limit token      → RateLimitError if none
+  ├─ 3. fetch() with User-Agent and timeout
+  │      ├─ 404 and allowNotFound                  → null
+  │      ├─ non-2xx                                → ApiError(status)
+  │      └─ retry on 429 / 5xx / network / timeout (max 2 retries)
+  └─ 4. Success → breaker.recordSuccess()
+        Failure → breaker.recordFailure() only for 429, 5xx, network errors and timeouts
 ```
 
-#### Configuration
+Every request sends `Accept: application/json` and `User-Agent: nutri-mcp/<version> (<OFF_CONTACT_EMAIL or repository URL>)`, as Open Food Facts requires. API keys are redacted from logged URLs.
 
-| Setting | Default | Environment Variable |
-|---------|---------|---------------------|
-| Failure threshold | 5 | `CB_FAILURE_THRESHOLD` |
-| Reset timeout | 30 seconds | `CB_RESET_TIMEOUT` |
+## Circuit breaker
 
-#### Usage
+One breaker per upstream service (`src/resilience/circuit-breaker.ts`):
 
-```typescript
-const breaker = new CircuitBreaker('openfoodfacts');
-
-const result = await breaker.execute(async () => {
-  return await fetchProduct(barcode);
-});
-
-// States
-breaker.isOpen();    // true if circuit is open
-breaker.isClosed();  // true if circuit is closed
-breaker.reset();     // manually reset to closed
+```
+            failures >= threshold
+  CLOSED ───────────────────────────▶ OPEN
+    ▲                                   │ after timeoutMs
+    │ successThreshold successes        ▼
+    └──────────────────────────── HALF_OPEN ── any failure ──▶ OPEN
 ```
 
-### Rate Limiter
+| Provider | Failure threshold | Success threshold (half-open) | Open for |
+|----------|-------------------|-------------------------------|----------|
+| `openfoodfacts` | 5 | 2 | 30 s |
+| `robotoff` | 5 | 2 | 60 s |
+| `openprices` | 5 | 2 | 60 s |
+| `usda` | 3 | 2 | 60 s |
+| `nutritionix` | 3 | 2 | 60 s |
+| `openfda` | 3 | 2 | 60 s |
 
-Respects API quotas automatically:
+A success in the closed state resets the failure count. Client errors (4xx other than 429) and local rate-limit timeouts do **not** count as failures, so a bad barcode or query cannot open the breaker. While a breaker is open, calls fail fast with `PROVIDER_UNAVAILABLE`; for barcode lookups the other sources still answer.
 
-```typescript
-const limiter = new RateLimiter();
+Breaker state is visible in `GET /health` in HTTP mode.
 
-// Acquire before making request
-await limiter.acquire('openfoodfacts');
+## Rate limiting
 
-// Check remaining quota
-const remaining = limiter.remaining('usda');
-```
+A token bucket per provider and endpoint (`src/resilience/rate-limiter.ts`), refilled continuously over the window. When the bucket is empty, a request waits for a token for up to **8 seconds** (`RATE_LIMIT_MAX_WAIT_MS`) and then fails with `RateLimitError`.
 
-#### Default Limits
+| Provider | Bucket | Limit |
+|----------|--------|-------|
+| `openfoodfacts` | `product` (product reads, additives taxonomy) | 15 / minute |
+| `openfoodfacts` | `search` (search-a-licious and legacy search) | 10 / minute |
+| `robotoff` | `all` | 60 / minute |
+| `openprices` | `all` | 60 / minute |
+| `usda` | `all` | 1000 / hour |
+| `nutritionix` | `all` | 200 / day |
+| `openfda` | `all` | 240 / minute |
 
-| Provider | Requests | Window |
-|----------|----------|--------|
-| Open Food Facts | 100 | 1 minute |
-| USDA | 1000 | 1 hour |
-| Nutritionix | 50 | 1 day |
+The Open Food Facts limits match its [documented quotas](https://openfoodfacts.github.io/openfoodfacts-server/api/) (15 product reads and 10 searches per minute per IP). Limits are per process and shared by all clients of an HTTP server.
 
-Configure with environment variables:
-- `RATE_LIMIT_OFF`
-- `RATE_LIMIT_USDA`
-- `RATE_LIMIT_NUTRITIONIX`
+## Timeouts
 
-### Retry with Exponential Backoff
+| Calls | Timeout |
+|-------|---------|
+| Default | `REQUEST_TIMEOUT` ms (10 s by default) |
+| Robotoff insights and questions | 20 s |
+| Open Food Facts additives taxonomy | 20 s |
 
-Handles transient failures:
+## Retries
 
-```typescript
-const result = await retry(
-  async () => fetchProduct(barcode),
-  {
-    maxRetries: 3,
-    initialDelay: 1000,    // 1 second
-    maxDelay: 10000,       // 10 seconds
-    backoffMultiplier: 2,  // Double each retry
-  }
-);
-```
+`withRetry()` (`src/resilience/retry.ts`) retries up to **2 times** (3 attempts in total) on:
 
-#### Retry Schedule
+- HTTP 429, 500, 502, 503, 504,
+- network errors (`TypeError: fetch failed`, `ECONNRESET`, `ETIMEDOUT`, `ENOTFOUND`, `ECONNREFUSED`),
+- timeouts and aborts.
 
-| Attempt | Delay |
-|---------|-------|
-| 1 | 1 second |
-| 2 | 2 seconds |
-| 3 | 4 seconds |
+The delay is exponential with jitter: 500 ms × 2<sup>attempt−1</sup> plus 0-30 %, capped at 8 s (about 0.5 s, then 1 s). Other 4xx responses are not retried.
 
-Only retries on:
-- Network errors
-- 5xx server errors
-- 429 rate limit responses
+## Cache
 
-Does not retry on:
-- 4xx client errors (except 429)
-- Validation errors
-- Circuit breaker open
+An in-memory LRU cache (`src/resilience/cache.ts`) shared by all providers and services. `CACHE_MAX_SIZE` (default 1000) limits the number of entries; the least recently used entry is evicted when full. `ENABLE_CACHING=false` stops storing entries.
 
-## Integration
+| Category | TTL | Used for |
+|----------|-----|----------|
+| `product` | 30 min | Product records (OFF, USDA, Nutritionix) |
+| `search` | 5 min | Search result pages |
+| `price` | 1 hour | Open Prices queries |
+| `taxonomy` | 24 hours | Open Food Facts additives taxonomy |
+| `robotoff` | 30 min | Defined, but Robotoff responses are currently not cached |
+| `recall` | 6 hours | openFDA queries (openFDA updates weekly) |
+| `notFound` | 5 min | Negative cache for barcodes a source does not know |
 
-All resilience components work together:
+Entries are marked stale after 80 % of their TTL; providers then fetch fresh data instead of serving the stale entry. The negative cache means repeated lookups of an unknown barcode do not use up the Open Food Facts quota.
 
-```typescript
-async function fetchWithResilience(barcode: string) {
-  // 1. Check cache
-  const cacheKey = `product:${barcode}`;
-  const cached = cache.get<Product>(cacheKey);
-  if (cached) return cached;
+## Graceful degradation
 
-  // 2. Check circuit breaker
-  return circuitBreaker.execute('openfoodfacts', async () => {
-    // 3. Apply rate limiting
-    await rateLimiter.acquire('openfoodfacts');
-
-    // 4. Retry on failure
-    const product = await retry(async () => {
-      const response = await fetch(`${API_URL}/products/${barcode}`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
-    });
-
-    // 5. Cache result
-    cache.set(cacheKey, product, 'product');
-
-    return product;
-  });
-}
-```
+- Barcode lookups query all configured sources in parallel. If Open Food Facts is down but USDA knows the product, the USDA record is returned; only when every source fails is the error surfaced.
+- Product search falls back from search-a-licious to the legacy `cgi/search.pl` endpoint when the former fails.
+- If the additives taxonomy cannot be loaded, `getAdditivesInfo` still returns the additive codes, without names and risk levels.
 
 ## Monitoring
 
-### Logging
-
-Enable debug logging to see resilience events:
-
 ```bash
-LOG_LEVEL=debug npx nutri-mcp
+LOG_LEVEL=debug npx -y nutri-mcp
 ```
 
-Output includes:
-- Cache hits and misses
-- Circuit breaker state changes
-- Rate limiter queue status
-- Retry attempts
-
-### Health Check
-
-The `/health` endpoint reports provider status:
+Failed upstream requests are logged as warnings with the URL (keys redacted) and the error. In HTTP mode, `GET /health` returns the enabled sources and the state of every circuit breaker used so far:
 
 ```json
 {
   "status": "healthy",
-  "providers": {
-    "openfoodfacts": "available",
-    "usda": "available",
-    "nutritionix": "circuit_open"
-  },
-  "cache": {
-    "size": 450,
-    "maxSize": 1000
+  "version": "0.2.0",
+  "timestamp": "2026-10-29T16:39:28.526Z",
+  "sources": ["openfoodfacts"],
+  "circuitBreakers": {
+    "openfoodfacts": { "failures": 0, "successes": 0, "lastSuccess": "2026-10-29T16:38:50.151Z", "state": "CLOSED" }
   }
 }
 ```
-
-## Best Practices
-
-1. **Use appropriate TTLs** - Product data changes rarely, search results more often
-2. **Monitor circuit breakers** - Open circuits indicate upstream issues
-3. **Size cache appropriately** - Balance memory vs hit rate
-4. **Set realistic rate limits** - Stay well under API quotas
-5. **Handle degraded mode** - Application should work with partial data

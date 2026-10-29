@@ -1,117 +1,112 @@
 # Configuration
 
-Nutri-MCP is configured through environment variables. All configuration is optional with sensible defaults.
+Nutri-MCP is configured with environment variables. Everything is optional: with no configuration it runs over stdio using Open Food Facts, Open Prices, Robotoff and openFDA.
 
-## Environment Variables
+Variables are validated with Zod at startup (`src/config/env.ts`). An invalid value stops the server with a message such as:
 
-### API Keys
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `USDA_API_KEY` | No | USDA FoodData Central API key |
-| `NUTRITIONIX_APP_ID` | No | Nutritionix application ID |
-| `NUTRITIONIX_APP_KEY` | No | Nutritionix API key |
-
-Open Food Facts does not require an API key.
-
-### Transport
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TRANSPORT` | `stdio` | Transport mode: `stdio` or `http` |
-| `HTTP_PORT` | `3000` | Port for HTTP transport |
-| `HTTP_HOST` | `localhost` | Host for HTTP transport |
-
-### Logging
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
-
-### Cache
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CACHE_MAX_SIZE` | `1000` | Maximum cache entries |
-| `CACHE_TTL_PRODUCT` | `3600000` | Product cache TTL (ms) |
-| `CACHE_TTL_SEARCH` | `1800000` | Search cache TTL (ms) |
-
-### Rate Limiting
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RATE_LIMIT_OFF` | `100` | Open Food Facts requests/minute |
-| `RATE_LIMIT_USDA` | `1000` | USDA requests/hour |
-| `RATE_LIMIT_NUTRITIONIX` | `50` | Nutritionix requests/day |
-
-### Circuit Breaker
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CB_FAILURE_THRESHOLD` | `5` | Failures before opening |
-| `CB_RESET_TIMEOUT` | `30000` | Time before half-open (ms) |
-
-## Configuration Examples
-
-### Basic (Open Food Facts Only)
-
-```bash
-# No configuration needed
-npx nutri-mcp
+```
+Error: Invalid environment configuration:
+  HTTP_PORT: Invalid input: expected number, received NaN
 ```
 
-### With USDA
+Empty strings are treated as "not set", which is convenient for MCP client configs and `.env` files.
+
+## Transport
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRANSPORT` | `stdio` | `stdio` or `http` |
+| `HTTP_PORT` | `3000` | Port for the HTTP transport (1-65535) |
+| `HTTP_HOST` | `127.0.0.1` | Interface the HTTP transport binds to |
+| `ALLOWED_ORIGINS` | not set | Comma-separated browser origins allowed to call `/mcp`; `*` allows any. When not set, only `localhost`, `127.0.0.1` and `[::1]` origins are allowed |
+
+Requests without an `Origin` header (CLIs, server-to-server calls) are always accepted. See [HTTP Transport](/guide/http-transport).
+
+## Data sources
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OFF_CONTACT_EMAIL` | not set | Contact sent in the User-Agent (`nutri-mcp/<version> (<contact>)`). Open Food Facts asks API users to identify themselves; without it the repository URL is sent |
+| `OFF_BASE_URL` | `https://world.openfoodfacts.org` | Open Food Facts server for product reads and legacy search. Use `https://world.openfoodfacts.net` for staging |
+| `USDA_API_KEY` | not set | USDA FoodData Central key ([free sign-up](https://fdc.nal.usda.gov/api-key-signup)) |
+| `NUTRITIONIX_APP_ID` | not set | Nutritionix application id (paid API) |
+| `NUTRITIONIX_APP_KEY` | not set | Nutritionix application key (paid API) |
+
+Open Food Facts, Open Prices, Robotoff and openFDA need no key.
+
+## Feature flags
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_USDA` | `true` | Use USDA when `USDA_API_KEY` is set |
+| `ENABLE_NUTRITIONIX` | `true` | Use Nutritionix when both Nutritionix variables are set; also registers `estimateNutritionFromText` |
+| `ENABLE_RECALLS` | `true` | Register the `checkRecalls` tool (openFDA) |
+| `ENABLE_CACHING` | `true` | Store upstream responses in the in-memory cache |
+
+Boolean values accept `true`/`false`, `1`/`0`, `yes`/`no` and `on`/`off` (case-insensitive). Anything else is rejected at startup.
+
+## Cache, timeouts and logging
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CACHE_MAX_SIZE` | `1000` | Maximum cache entries (100-100000); least recently used entries are evicted first |
+| `REQUEST_TIMEOUT` | `10000` | Upstream request timeout in ms (1000-60000). Robotoff and the additives taxonomy use 20 s |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| `LOG_FILE` | not set | Also append log lines to this file. Logs always go to stderr; stdout is reserved for JSON-RPC |
+
+Cache TTLs, rate limits, retry and circuit breaker settings are constants in `src/config/constants.ts`, not environment variables. See [Resilience](/guide/resilience).
+
+## Examples
+
+### Default (stdio, no keys)
 
 ```bash
-USDA_API_KEY=your-key npx nutri-mcp
+npx -y nutri-mcp
 ```
 
-### With All Providers
+### With USDA and a contact email
 
 ```bash
+OFF_CONTACT_EMAIL=you@example.com USDA_API_KEY=your-usda-key npx -y nutri-mcp
+```
+
+### With every provider
+
+```bash
+OFF_CONTACT_EMAIL=you@example.com \
 USDA_API_KEY=your-usda-key \
 NUTRITIONIX_APP_ID=your-app-id \
 NUTRITIONIX_APP_KEY=your-app-key \
-npx nutri-mcp
+npx -y nutri-mcp
 ```
 
-### HTTP Transport
+### HTTP server for a browser app
 
 ```bash
 TRANSPORT=http \
 HTTP_PORT=8080 \
-npx nutri-mcp
+ALLOWED_ORIGINS=https://app.example.com \
+npx -y nutri-mcp
 ```
 
-### Production Settings
+### Against the Open Food Facts staging server
 
 ```bash
-LOG_LEVEL=warn \
-CACHE_MAX_SIZE=5000 \
-CACHE_TTL_PRODUCT=7200000 \
-CB_FAILURE_THRESHOLD=10 \
-npx nutri-mcp
+OFF_BASE_URL=https://world.openfoodfacts.net LOG_LEVEL=debug npx -y nutri-mcp
 ```
 
-## Provider Priority
+### Without recalls and USDA
 
-When multiple providers are configured, Nutri-MCP queries them in this order:
-
-1. **Open Food Facts** - Always queried first (no API key required)
-2. **USDA FoodData Central** - Queried if API key is configured
-3. **Nutritionix** - Queried if both APP_ID and APP_KEY are configured
-
-Results are aggregated with data merged from all available sources.
-
-## Validation
-
-Configuration is validated at startup using Zod schemas. Invalid values will cause the server to exit with an error message.
-
-```typescript
-// Example validation schema
-const envSchema = z.object({
-  TRANSPORT: z.enum(['stdio', 'http']).default('stdio'),
-  HTTP_PORT: z.coerce.number().min(1).max(65535).default(3000),
-  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-});
+```bash
+ENABLE_RECALLS=false ENABLE_USDA=false npx -y nutri-mcp
 ```
+
+## How sources are combined
+
+For a barcode lookup, every configured product source (Open Food Facts, then USDA, then Nutritionix) is queried in parallel:
+
+- The first product found, Open Food Facts when it knows the barcode, is the base record. Other sources only fill missing fields and nutrients; allergens and traces are merged.
+- If no source knows the barcode, the tool reports `PRODUCT_NOT_FOUND`.
+- If every source failed (for example all were unreachable), the error is surfaced instead of "not found".
+
+Searches query the same sources (USDA and Nutritionix only for text queries) and deduplicate results by barcode, ignoring leading zeros.

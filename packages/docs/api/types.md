@@ -1,324 +1,441 @@
 # Types Reference
 
-TypeScript type definitions used throughout Nutri-MCP.
+TypeScript types from `packages/core/src/types/`. Tool outputs are these types serialized to JSON (dates become ISO strings, `undefined` fields are dropped) and validated against each tool's `outputSchema`; the exact output of every tool is in the [Tools Reference](/tools/overview).
 
-## Core Types
+## Common types
 
-### Product
-
-The main product type returned by getProduct and search tools.
+`common.types.ts`
 
 ```typescript
-interface Product {
-  barcode: string;
-  name: string;
-  brand?: string;
-  categories: string[];
-  quantity?: string;
-  servingSize?: string;
-  ingredients?: string;
-  nutrients: Nutrient[];
-  nutriScore?: NutriScore;
-  novaGroup?: NovaGroup;
-  ecoScore?: EcoScore;
-  allergens: string[];
-  traces: string[];
-  labels: string[];
-  packaging?: string;
-  origins?: string;
-  stores?: string[];
-  countries?: string[];
-  imageUrl?: string;
-  sources: DataSource[];
-}
-```
+type DataSource = 'openfoodfacts' | 'usda' | 'nutritionix' | 'openprices' | 'openfda' | 'calculated';
 
-### Nutrient
-
-Individual nutrient information.
-
-```typescript
-interface Nutrient {
-  id: NutrientId;
-  name: string;
-  value: number;
-  unit: NutrientUnit;
-  per100g: number;
-  perServing?: number;
-  dailyValuePercent?: number;
-  source?: DataSource;
-}
-
-type NutrientUnit = 'g' | 'mg' | 'mcg' | 'kcal' | 'kJ' | 'IU' | '%';
-
-type NutrientId =
-  | 'energy'
-  | 'fat'
-  | 'saturated_fat'
-  | 'trans_fat'
-  | 'cholesterol'
-  | 'carbs'
-  | 'fiber'
-  | 'sugar'
-  | 'protein'
-  | 'sodium'
-  | 'calcium'
-  | 'iron'
-  | 'potassium'
-  | 'vitamin_a'
-  | 'vitamin_c'
-  | 'vitamin_d'
-  | 'vitamin_e'
-  | 'vitamin_k'
-  | 'vitamin_b1'
-  | 'vitamin_b2'
-  | 'vitamin_b3'
-  | 'vitamin_b6'
-  | 'vitamin_b12'
-  | 'folate'
-  | 'magnesium'
-  | 'zinc'
-  | 'phosphorus';
-```
-
-## Score Types
-
-### NutriScore
-
-Nutritional quality score (French system, adopted by EU).
-
-```typescript
-interface NutriScore {
-  grade: NutriScoreGrade;
-  score: number;
-  negative?: {
-    energy: number;
-    sugars: number;
-    saturatedFat: number;
-    sodium: number;
-  };
-  positive?: {
-    fiber: number;
-    protein: number;
-    fruitsVegetables: number;
-  };
-}
+type NutrientUnit = 'g' | 'mg' | 'mcg' | 'kcal' | 'kJ' | 'IU' | '%' | '% vol';
 
 type NutriScoreGrade = 'A' | 'B' | 'C' | 'D' | 'E';
-```
 
-### NovaGroup
+/** Green-Score (formerly Eco-Score): the 2025 scale adds A+ and F */
+type GreenScoreGrade = 'A+' | 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
-Food processing classification (Brazilian system).
+/** 1 = unprocessed or minimally processed ... 4 = ultra-processed */
+type NovaGroup = 1 | 2 | 3 | 4;
 
-```typescript
-interface NovaGroup {
-  group: NovaGroupNumber;
-  name: string;
-  description?: string;
-  indicators?: string[];
-}
+type AllergenId =
+  | 'gluten' | 'wheat' | 'dairy' | 'eggs' | 'fish' | 'shellfish' | 'mollusks'
+  | 'tree_nuts' | 'peanuts' | 'soy' | 'celery' | 'mustard' | 'sesame' | 'sulfites' | 'lupin';
 
-type NovaGroupNumber = 1 | 2 | 3 | 4;
-```
+type DietType =
+  | 'vegan' | 'vegetarian' | 'pescatarian' | 'keto' | 'paleo'
+  | 'gluten_free' | 'dairy_free' | 'low_sodium' | 'low_sugar' | 'halal' | 'kosher';
 
-| Group | Name | Description |
-|-------|------|-------------|
-| 1 | Unprocessed | Fresh foods, minimally processed |
-| 2 | Processed culinary | Oils, butter, sugar used in cooking |
-| 3 | Processed | Canned, preserved, simple processing |
-| 4 | Ultra-processed | Industrial formulations, 5+ ingredients |
-
-### EcoScore
-
-Environmental impact score.
-
-```typescript
-interface EcoScore {
-  grade: EcoScoreGrade;
-  score: number;
-  impacts?: {
-    carbonFootprint?: string;
-    waterUsage?: string;
-    packaging?: string;
-    transportation?: string;
-  };
-}
-
-type EcoScoreGrade = 'A' | 'B' | 'C' | 'D' | 'E';
-```
-
-## Search Types
-
-### SearchResult
-
-Paginated search results.
-
-```typescript
-interface SearchResult {
-  products: Product[];
-  total: number;
+interface PaginationParams {
   page: number;
   pageSize: number;
 }
-```
 
-### SearchOptions
-
-Search filters and pagination.
-
-```typescript
-interface SearchOptions {
-  limit?: number;
-  offset?: number;
-  filters?: SearchFilters;
+interface PaginationResult {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
 }
 
-interface SearchFilters {
-  brand?: string;
-  category?: string;
-  country?: string;
-  nutriScoreMax?: NutriScoreGrade;
-  novaGroupMax?: NovaGroupNumber;
-  allergenFree?: string[];
-}
-```
-
-## Analysis Types
-
-### NutritionAnalysis
-
-Complete nutritional analysis result.
-
-```typescript
-interface NutritionAnalysis {
-  calories: number;
-  macros: MacroBreakdown;
-  dailyValues: Record<string, number>;
-  concerns: string[];
-  benefits: string[];
+interface PaginatedResponse<T> {
+  items: T[];
+  pagination: PaginationResult;
+  sources: DataSource[];
 }
 
-interface MacroBreakdown {
-  protein: MacroDetail;
-  carbs: MacroDetail;
-  fat: MacroDetail;
-}
-
-interface MacroDetail {
-  grams: number;
-  calories: number;
-  percentOfCalories: number;
-}
-```
-
-### AllergenCheck
-
-Allergen check result.
-
-```typescript
-interface AllergenCheck {
-  safe: boolean;
-  contains: string[];
-  mayContain: string[];
+interface DataQuality {
+  score: number;           // 0-100
+  completeness: number;    // 0-100
+  lastVerified?: Date;
   warnings: string[];
 }
 ```
 
-### DietCompatibility
+`shellfish` means crustaceans; `mollusks` is separate, as in the EU 14 list.
 
-Diet compatibility result.
+## Product
+
+`product.types.ts`. The normalized record returned by `getProductByBarcode` and the `nutri://product/{barcode}` resource, merged from every source that knows the barcode.
 
 ```typescript
-interface DietCompatibility {
-  compatible: string[];
-  incompatible: DietIncompatibility[];
+interface Product {
+  // Identifiers
+  barcode: string;
+  fdcId?: string;               // USDA FoodData Central id
+  nixItemId?: string;           // Nutritionix id
+
+  // Basic information
+  name: string;
+  brand?: string;
+  genericName?: string;
+  categories: string[];
+  categoryTags?: string[];      // raw OFF tags, most specific last (e.g. "en:hazelnut-spreads")
+  labels: string[];
+
+  // Quantity
+  quantity?: string;            // package quantity, e.g. "400 g"
+  servingSize?: ServingSize;
+
+  // Nutrition (per 100 g / 100 ml)
+  nutrients: Nutrient[];
+
+  // Scores
+  nutriScore?: NutriScore;
+  greenScore?: GreenScore;
+  novaGroup?: NovaGroup;
+
+  // Ingredients and allergens
+  ingredientsText?: string;
+  ingredients?: Ingredient[];
+  ingredientsAnalysis?: IngredientsAnalysis;
+  allergens: Allergen[];
+  traces: Allergen[];
+  additives: Additive[];
+
+  // Origin and packaging
+  countries: string[];
+  packaging?: string[];
+  origins?: string[];
+
+  images?: ProductImages;
+
+  // Metadata
+  url?: string;
+  sources: DataSource[];
+  lastUpdated?: Date;
+  dataQuality: DataQuality;
 }
 
-interface DietIncompatibility {
-  diet: string;
-  reason: string;
+interface ServingSize {
+  amount: number;
+  unit: string;
+  grams?: number;
+  description?: string;         // label text, e.g. "15 g"
+}
+
+interface Allergen {
+  id: AllergenId;
+  name: string;
+  certainty: 'confirmed' | 'may_contain' | 'traces';
+}
+
+type AnalysisStatus = 'yes' | 'no' | 'maybe' | 'unknown';
+
+/** Computed by Open Food Facts from the ingredient list */
+interface IngredientsAnalysis {
+  vegan: AnalysisStatus;
+  vegetarian: AnalysisStatus;
+  palmOilFree: AnalysisStatus;
+}
+
+interface Additive {
+  code: string;                 // E-number, e.g. "E322"
+  name: string;
+  riskLevel: 'low' | 'moderate' | 'high' | 'unknown';   // EFSA over-exposure risk
+  description?: string;
+}
+
+interface Ingredient {
+  id: string;
+  name: string;
+  percent?: number;
+  vegan?: boolean;
+  vegetarian?: boolean;
+  subIngredients?: Ingredient[];
+}
+
+interface ProductImages {
+  front?: string;
+  nutrition?: string;
+  ingredients?: string;
+  packaging?: string;
+  thumbnail?: string;
 }
 ```
 
-## Comparison Types
+### ProductSummary
+
+Returned by `searchProducts`.
+
+```typescript
+interface ProductSummary {
+  barcode: string;
+  name: string;
+  brand?: string;
+  categories: string[];
+  nutriScoreGrade?: 'A' | 'B' | 'C' | 'D' | 'E';
+  novaGroup?: NovaGroup;
+  quantity?: string;
+  thumbnail?: string;
+  sources: DataSource[];
+}
+```
+
+### ProductSearchFilters
+
+```typescript
+interface ProductSearchFilters {
+  query?: string;
+  brand?: string;
+  category?: string;            // name or OFF tag, e.g. "en:breakfast-cereals"
+  nutriScoreMax?: 'A' | 'B' | 'C' | 'D' | 'E';
+  novaMax?: NovaGroup;
+  // Declared but not used by the current providers:
+  nutriScoreMin?: 'A' | 'B' | 'C' | 'D' | 'E';
+  allergenFree?: AllergenId[];
+  vegan?: boolean;
+  vegetarian?: boolean;
+  organic?: boolean;
+}
+```
 
 ### ProductComparison
 
-Side-by-side comparison result.
+Returned by `ComparisonService.compare()` (the `compareProducts` tool returns a trimmed version).
 
 ```typescript
 interface ProductComparison {
   products: Product[];
-  comparison: Record<string, Record<string, number>>;
-  scores: {
-    nutriScore: Record<string, NutriScoreGrade>;
-    novaGroup: Record<string, NovaGroupNumber>;
+  comparison: {
+    winner?: { barcode: string; reason: string };
+    nutritionComparison: NutrientComparison[];
+    scoreComparison: ScoreComparison;
+    summary: string;
   };
-  winner?: {
-    overall: string;
-    reason: string;
-  };
+}
+
+interface NutrientComparison {
+  nutrientId: string;
+  name: string;
+  values: { barcode: string; value: number | null; unit: string }[];
+  better?: string;              // barcode of the better product
+}
+
+interface ScoreComparison {
+  nutriScore: { barcode: string; grade: string }[];
+  greenScore: { barcode: string; grade: string }[];
+  novaGroup: { barcode: string; group: number }[];
 }
 ```
 
-## Price Types
+## Nutrition
 
-### PriceInfo
-
-Product price information.
+`nutrition.types.ts`
 
 ```typescript
-interface PriceInfo {
-  retailer: string;
+type NutrientId =
+  // Energy
+  | 'energy' | 'energy_kcal' | 'energy_kj'
+  // Macronutrients
+  | 'fat' | 'saturated_fat' | 'trans_fat' | 'monounsaturated_fat' | 'polyunsaturated_fat'
+  | 'cholesterol' | 'carbohydrates' | 'sugars' | 'added_sugars' | 'fiber' | 'protein'
+  // Minerals
+  | 'sodium' | 'salt' | 'calcium' | 'iron' | 'potassium' | 'magnesium' | 'zinc'
+  | 'phosphorus' | 'selenium' | 'copper' | 'manganese'
+  // Vitamins
+  | 'vitamin_a' | 'vitamin_c' | 'vitamin_d' | 'vitamin_e' | 'vitamin_k'
+  | 'vitamin_b1' | 'vitamin_b2' | 'vitamin_b3' | 'vitamin_b5' | 'vitamin_b6'
+  | 'vitamin_b9' | 'vitamin_b12'
+  // Other
+  | 'alcohol' | 'caffeine' | 'water';
+
+interface Nutrient {
+  id: NutrientId;
+  name: string;
+  value: number;                // per 100 g / 100 ml
+  unit: NutrientUnit;           // g, mg (sodium, minerals, ...), mcg (vitamins A, D, K, B9, B12, selenium), kcal, kJ
+  per100g?: number;
+  perServing?: number;          // when the serving size in grams is known
+  dailyValuePercent?: number;   // % of the FDA Daily Value, per 100 g
+  source: DataSource;
+}
+
+interface NutriScore {
+  grade: NutriScoreGrade;
+  score?: number;               // lower is better
+  version?: '2021' | '2023';
+  positive: NutriScoreComponent[];   // fiber, protein, fruits/vegetables/legumes
+  negative: NutriScoreComponent[];   // energy, sugars, saturated fat, salt (and sweeteners for beverages)
+}
+
+interface NutriScoreComponent {
+  id: string;                   // e.g. "sugars", "fruits_vegetables_legumes"
+  value: number | null;
+  unit?: string;
+  points: number;
+  pointsMax?: number;
+}
+
+/** Green-Score (formerly Eco-Score) environmental impact */
+interface GreenScore {
+  grade: GreenScoreGrade;
+  score?: number;               // 0-100, can be negative with maluses
+}
+
+interface MacroBreakdown {
+  protein: { grams: number; calories: number; percent: number };
+  carbs: { grams: number; calories: number; percent: number };
+  fat: { grams: number; calories: number; percent: number };
+  alcohol?: { grams: number; calories: number; percent: number };
+}
+
+interface NutritionAnalysis {
+  calories: number;
+  macros: MacroBreakdown;
+  nutrients: Nutrient[];
+  dailyValueSummary: DailyValueSummary;
+  concerns: NutritionConcern[];
+  benefits: NutritionBenefit[];
+}
+
+interface DailyValueSummary {
+  exceeds: NutrientId[];        // > 100 % DV
+  adequate: NutrientId[];       // 20-100 % DV
+  low: NutrientId[];            // < 20 % DV
+}
+
+interface NutritionConcern {
+  nutrient: NutrientId;
+  level: 'high' | 'very_high';
+  message: string;
+}
+
+interface NutritionBenefit {
+  nutrient: NutrientId;
+  level: 'good' | 'excellent';  // >= 10 % DV / >= 20 % DV
+  message: string;
+}
+```
+
+## Prices
+
+`price.types.ts`. Data from Open Prices (crowdsourced, backed by receipt and price-tag proofs).
+
+```typescript
+interface Price {
+  id: string;
+  productBarcode: string;
+  productName?: string;
   price: number;
+  currency: string;             // ISO 4217
+  isDiscounted: boolean;
+  priceWithoutDiscount?: number;
+  discountType?: string;
+  store?: StoreInfo;
+  location?: LocationInfo;
+  date: string;                 // YYYY-MM-DD
+  proofType?: string;           // RECEIPT | PRICE_TAG | ...
+  source: DataSource;           // 'openprices'
+}
+
+interface StoreInfo {
+  id?: string;
+  name: string;
+  brand?: string;
+}
+
+interface LocationInfo {
+  country?: string;
+  countryCode?: string;         // ISO 3166-1 alpha-2
+  city?: string;
+  postalCode?: string;
+  coordinates?: { latitude: number; longitude: number };
+}
+
+interface PriceSearchFilters {
+  barcode?: string;
+  country?: string;             // filtered client-side
+  currency?: string;
+  discountedOnly?: boolean;
+  dateFrom?: string;            // YYYY-MM-DD
+  limit?: number;
+}
+
+interface CurrencyPriceStats {
   currency: string;
-  inStock?: boolean;
-  lastUpdated?: string;
-  location?: string;
+  count: number;
+  min: number;
+  max: number;
+  avg: number;
+  median: number;
+  latest: { price: number; date: string };
+}
+
+interface PriceStats {
+  barcode: string;
+  priceCount: number;
+  byCurrency: CurrencyPriceStats[];   // never mixed across currencies
+  firstDate: string;
+  lastDate: string;
+}
+
+interface PriceHistoryPoint {
+  month: string;                // YYYY-MM
+  currency: string;
+  count: number;
+  median: number;
+  min: number;
+  max: number;
 }
 
 interface PriceComparison {
-  barcode: string;
-  name: string;
-  prices: PriceInfo[];
-  average: number;
-  lowest: number;
-  highest: number;
+  currency: string;
+  products: {
+    barcode: string;
+    name: string;
+    bestPrice: Price | null;
+    medianPrice: number | null;
+    quantity?: string;
+    pricePerKgOrL?: number;     // median price per kg or litre
+  }[];
+  cheapest: string | null;      // barcode, by median price
+  bestValue: string | null;     // barcode, by price per kg/L
 }
 ```
 
-## Error Types
+## Recalls
 
-### NutriMCPError
-
-Custom error class.
+Defined in `services/recall.service.ts`.
 
 ```typescript
-class NutriMCPError extends Error {
-  constructor(
-    message: string,
-    public code: ErrorCode,
-    public details?: unknown
-  ) {
-    super(message);
-    this.name = 'NutriMCPError';
-  }
-}
-
-enum ErrorCode {
-  PRODUCT_NOT_FOUND = 'PRODUCT_NOT_FOUND',
-  INVALID_BARCODE = 'INVALID_BARCODE',
-  INVALID_INPUT = 'INVALID_INPUT',
-  PROVIDER_ERROR = 'PROVIDER_ERROR',
-  RATE_LIMITED = 'RATE_LIMITED',
-  CIRCUIT_OPEN = 'CIRCUIT_OPEN',
-  NETWORK_ERROR = 'NETWORK_ERROR',
+interface Recall {
+  recallNumber: string;
+  status: string;               // Ongoing | Completed | Terminated
+  classification: string;       // Class I (most serious) | Class II | Class III
+  reportDate?: string;          // YYYY-MM-DD
+  recallInitiationDate?: string;
+  recallingFirm: string;
+  productDescription: string;
+  reason: string;
+  codeInfo?: string;
+  distribution?: string;
+  country?: string;
+  matchedBy: 'barcode' | 'text';
 }
 ```
 
-## Data Sources
+## Errors
+
+`errors/index.ts`
 
 ```typescript
-type DataSource = 'openfoodfacts' | 'usda' | 'nutritionix';
+class NutriMcpError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+}
+
+class ProductNotFoundError extends NutriMcpError {}      // code PRODUCT_NOT_FOUND, barcode
+class InvalidBarcodeError extends NutriMcpError {}       // code INVALID_BARCODE, barcode, reason
+class ValidationError extends NutriMcpError {}           // code VALIDATION_ERROR, field
+class ProviderUnavailableError extends NutriMcpError {}  // code PROVIDER_UNAVAILABLE (retryable), provider
+class ApiError extends NutriMcpError {}                  // code API_ERROR, statusCode, provider; retryable for 429/5xx
+
+/** Text is "Error [CODE]: message" for NutriMcpError, "Error: message" otherwise */
+function formatErrorForMcp(error: unknown): { content: Array<{ type: 'text'; text: string }>; isError: true };
 ```
+
+Tools never throw to the client: errors are returned as tool results with `isError: true`.

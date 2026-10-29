@@ -1,273 +1,264 @@
 # Services API
 
-Internal services that implement business logic.
+Services in `packages/core/src/services/` hold the business logic used by the tools. Each service is a class with a singleton getter (for example `getProductService()`). `services/index.ts` re-exports `ProductService`, `NutritionService`, `AllergenService`, `ComparisonService` and `PriceService`; `RecallService`, `AdditiveService` and the `daily-values` helpers are imported from their own files.
+
+All values are per 100 g / 100 ml unless a field says otherwise.
 
 ## ProductService
 
-Handles product retrieval and aggregation from multiple providers.
+`product.service.ts`. Looks up and searches products across the configured [providers](/api/providers) (Open Food Facts, then USDA, then Nutritionix).
 
 ```typescript
 class ProductService {
-  constructor(providers: Provider[]);
+  /** Product sources currently configured, e.g. ['openfoodfacts', 'usda'] */
+  enabledSources(): DataSource[];
 
-  // Get product by barcode from all providers
-  async get(barcode: string): Promise<Product | null>;
+  /**
+   * Query every configured source in parallel and merge the results.
+   * Returns null when no source knows the barcode; throws when every source failed.
+   */
+  getByBarcode(barcode: string): Promise<Product | null>;
 
-  // Get product from specific providers
-  async getFromSources(
-    barcode: string,
-    sources: DataSource[]
-  ): Promise<Product | null>;
+  /** Like getByBarcode, but throws ProductNotFoundError instead of returning null */
+  requireByBarcode(barcode: string): Promise<Product>;
 
-  // Search across all providers
-  async search(
-    query: string,
-    options?: SearchOptions
-  ): Promise<SearchResult>;
+  /** Fetch several products (deduplicated); unknown barcodes are listed in `missing` */
+  getMany(barcodes: string[]): Promise<{ found: Product[]; missing: string[] }>;
+
+  /**
+   * Search all configured sources (optionally only `sources`), dedupe by barcode
+   * ignoring leading zeros. Throws only if every source failed.
+   */
+  search(
+    filters: ProductSearchFilters,
+    pagination: PaginationParams,
+    sources?: DataSource[],
+  ): Promise<PaginatedResponse<ProductSummary>>;
 }
+
+/** First product is the base; others fill missing fields, nutrients, allergens and traces */
+function mergeProducts(products: Product[]): Product;
 ```
 
-### Usage
-
 ```typescript
-const productService = new ProductService(providers);
+import { getProductService } from './services/product.service.js';
 
-// Get product
-const product = await productService.get('3017620422003');
-
-// Search
-const results = await productService.search('chocolate', {
-  limit: 10,
-  filters: { nutriScoreMax: 'C' }
-});
+const products = getProductService();
+const nutella = await products.requireByBarcode('3017620422003');
+const page = await products.search({ query: 'granola', nutriScoreMax: 'B' }, { page: 1, pageSize: 10 });
 ```
 
 ## NutritionService
 
-Calculates nutritional analysis, macros, and daily values.
+`nutrition.service.ts`. Pure calculations on normalized nutrients.
 
 ```typescript
+type TrafficLight = 'low' | 'medium' | 'high';
+interface TrafficLights { fat?: TrafficLight; saturated_fat?: TrafficLight; sugars?: TrafficLight; salt?: TrafficLight }
+
 class NutritionService {
-  // Complete nutritional analysis
-  analyze(product: Product): NutritionAnalysis;
+  /** Calories, macros, nutrients, %DV summary, traffic lights, concerns, benefits and a `basis` note */
+  analyzeProduct(product: Product): NutritionAnalysis & { trafficLights: TrafficLights; basis: string };
 
-  // Get macronutrient breakdown
-  getMacros(product: Product): MacroBreakdown;
+  /** Nutrient ids grouped by %DV: exceeds (>100), adequate (20-100), low (<20) */
+  calculateDailyValues(nutrients: Nutrient[]): DailyValueSummary;
 
-  // Calculate daily value percentages
-  getDailyValues(product: Product, servings?: number): DailyValueResult;
+  /** kcal per 100 g, derived from kJ (÷ 4.184) when kcal is missing; 0 if unknown */
+  getCalories(nutrients: Nutrient[]): number;
 
-  // Calculate for specific serving size
-  calculateForServing(product: Product, grams: number): Nutrient[];
+  /** Grams, calories (4/4/9 kcal per g) and share of energy for protein, carbs and fat */
+  calculateMacros(nutrients: Nutrient[]): MacroBreakdown;
 
-  // Get nutrient density score
-  getNutrientDensity(product: Product): NutrientDensityResult;
+  /** Sum of %DV (each capped at 100) of fiber, protein, vitamins A/C/D, calcium, iron,
+   *  potassium and magnesium, per 100 kcal */
+  calculateNutrientDensity(product: Product): number;
+
+  /** UK FSA traffic lights per 100 g; salt is derived from sodium (× 2.5) when missing */
+  trafficLights(nutrients: Nutrient[]): TrafficLights;
+
+  /** "High" traffic lights (very_high above twice the threshold), plus trans fat > 0.5 g */
+  identifyConcerns(nutrients: Nutrient[]): NutritionConcern[];
+
+  /** Good (>= 10 %DV) or excellent (>= 20 %DV) sources of fiber, protein, vitamins and minerals */
+  identifyBenefits(nutrients: Nutrient[]): NutritionBenefit[];
+
+  /** Value of a nutrient, 0 when absent */
+  getNutrientValue(nutrients: Nutrient[], id: string): number;
 }
 ```
 
-### Usage
+Traffic light thresholds (g per 100 g, `TRAFFIC_LIGHTS` in `constants.ts`, also served as `nutri://reference/traffic-lights`):
 
-```typescript
-const nutritionService = new NutritionService();
-
-const analysis = nutritionService.analyze(product);
-// { calories: 539, macros: {...}, concerns: [...] }
-
-const macros = nutritionService.getMacros(product);
-// { protein: { grams: 6.3, calories: 25, percent: 5 }, ... }
-```
+| Nutrient | Low (≤) | High (>) |
+|----------|---------|----------|
+| Fat | 3 | 17.5 |
+| Saturated fat | 1.5 | 5 |
+| Sugars | 5 | 22.5 |
+| Salt | 0.3 | 1.5 |
 
 ## AllergenService
 
-Handles allergen detection, dietary compatibility, and alternatives.
+`allergen.service.ts`. Allergen and diet checks on label data.
 
 ```typescript
+interface AllergenCheckResult {
+  safe: boolean;            // not declared, not in traces, not implied
+  allergen: AllergenId;
+  found: Allergen | null;
+  inTraces: boolean;
+  note?: string;            // e.g. wheat inferred from a gluten declaration
+}
+
+interface DietComplianceResult {
+  compliant: boolean;
+  verdict: 'compliant' | 'not_compliant' | 'uncertain';
+  diet: DietType;
+  violations: string[];
+  warnings: string[];
+  basis: string[];          // evidence used (OFF ingredient analysis, labels, nutrients, keywords)
+}
+
 class AllergenService {
-  // Check for specific allergens
-  check(product: Product, allergens: string[]): AllergenCheck;
-
-  // Get all allergens in product
-  getAllAllergens(product: Product): string[];
-
-  // Check dietary compatibility
-  checkDietCompatibility(
-    product: Product,
-    diets: string[]
-  ): DietCompatibility;
-
-  // Parse and analyze ingredients
-  analyzeIngredients(product: Product): IngredientAnalysis;
-
-  // Get cross-contamination info
-  getCrossContamination(product: Product): CrossContaminationInfo;
-
-  // Validate "free-from" claims
-  validateClaim(product: Product, claim: string): ClaimValidation;
+  checkAllergen(product: Product, allergen: AllergenId): AllergenCheckResult;
+  checkMultipleAllergens(product: Product, allergens: AllergenId[]): { safe: boolean; results: AllergenCheckResult[] };
+  /** US FDA Big 9: dairy, eggs, fish, shellfish, tree_nuts, peanuts, wheat, soy, sesame */
+  checkBig9(product: Product): { safe: boolean; results: AllergenCheckResult[] };
+  /** EU 14 (Regulation 1169/2011) */
+  checkEU14(product: Product): { safe: boolean; results: AllergenCheckResult[] };
+  getAllAllergens(product: Product): { confirmed: Allergen[]; mayContain: Allergen[]; traces: Allergen[] };
+  /** Based on traces, "may contain" declarations and facility phrases in the ingredients text */
+  assessCrossContaminationRisk(product: Product): { risk: 'low' | 'medium' | 'high' | 'unknown'; factors: string[] };
+  checkDietCompliance(product: Product, diet: DietType): DietComplianceResult;
+  filterSafeProducts(products: Product[], allergens: AllergenId[]): Product[];
 }
 ```
 
-### Supported Allergens
+Notes:
 
-```typescript
-const ALLERGENS = [
-  'gluten', 'wheat', 'milk', 'eggs', 'fish', 'shellfish',
-  'peanuts', 'tree_nuts', 'soy', 'sesame', 'celery',
-  'mustard', 'lupin', 'molluscs', 'sulfites'
-];
-```
-
-### Supported Diets
-
-```typescript
-const DIETS = [
-  'vegan', 'vegetarian', 'pescatarian',
-  'gluten-free', 'dairy-free', 'nut-free',
-  'keto', 'low-carb', 'low-sodium',
-  'halal', 'kosher'
-];
-```
+- Open Food Facts tags wheat-based products with `gluten`, so checking `wheat` treats a gluten declaration as "may contain wheat" (`IMPLIED_ALLERGENS`).
+- Diet checks combine the OFF ingredient analysis (vegan, vegetarian), declared allergens, labels (gluten-free, halal, kosher), nutrients (`keto`: net carbohydrates ≤ 10 g per 100 g; `low_sodium` and `low_sugar`: EU claim thresholds of 120 mg sodium and 5 g sugars per 100 g), NOVA (`paleo` excludes NOVA 4) and multilingual ingredient keywords (English, Spanish, French, German, Italian, Portuguese), with plant-based phrases such as "coconut milk" or "cocoa butter" excluded.
+- Missing data yields `verdict: 'uncertain'` rather than a false "compliant". Halal and kosher are only `compliant` with a certification label.
 
 ## ComparisonService
 
-Compares products and finds alternatives.
+`comparison.service.ts`.
 
 ```typescript
 class ComparisonService {
-  constructor(productService: ProductService);
+  /** Nutrient-by-nutrient and score comparison of 2+ products, with an overall winner and summary */
+  compare(products: Product[]): ProductComparison;
 
-  // Compare multiple products
-  async compare(barcodes: string[]): Promise<ProductComparison>;
+  /** Best candidate that improves on NOVA, Nutri-Score, salt, sugars, saturated fat, fiber or protein */
+  findHealthierAlternative(
+    original: Product,
+    alternatives: Product[],
+  ): { alternative: Product; improvements: string[] } | null;
 
-  // Find healthier alternatives
-  async findHealthierAlternatives(
-    barcode: string,
-    options?: { category?: string; maxResults?: number }
-  ): Promise<AlternativeResult>;
+  /** Products ranked by NutritionService.calculateNutrientDensity */
+  compareNutrientDensity(products: Product[]): {
+    ranking: { barcode: string; name: string; density: number }[];
+    best: string;
+  };
 
-  // Compare nutrient density
-  async compareNutrientDensity(
-    barcodes: string[]
-  ): Promise<NutrientDensityComparison>;
-
-  // Rank by specific nutrient
-  async rankByNutrient(
-    barcodes: string[],
-    nutrient: string,
-    order?: 'asc' | 'desc'
-  ): Promise<NutrientRanking>;
+  /** Sorted by one nutrient (ascending by default); products without data go last */
+  rankByNutrient(
+    products: Product[],
+    nutrientId: string,
+    ascending?: boolean,
+  ): { barcode: string; name: string; value: number | null; unit?: string }[];
 }
 ```
+
+In `compare`, lower is better for energy, fat, saturated and trans fat, sugars, added sugars, salt, sodium and cholesterol; a product without data for a nutrient never wins it. A better Nutri-Score weighs more than single nutrients when picking the winner.
 
 ## PriceService
 
-Handles price data and comparisons.
+`price.service.ts`. Crowdsourced prices from [Open Prices](https://prices.openfoodfacts.org). Prices in different currencies are never mixed.
 
 ```typescript
 class PriceService {
-  // Get prices across retailers
-  async getPrices(barcode: string): Promise<PriceComparison>;
-
-  // Find best price
-  async findBestPrice(
-    barcode: string,
-    location?: string
-  ): Promise<BestPrice>;
-
-  // Get price history
-  async getPriceHistory(
-    barcode: string,
-    days?: number
-  ): Promise<PriceHistory>;
-
-  // Compare prices between products
-  async comparePrices(barcodes: string[]): Promise<PriceComparison[]>;
-
-  // Calculate price per unit
-  async getPricePerUnit(barcode: string): Promise<PricePerUnit>;
-
-  // Find deals
-  async findDeals(filters?: DealFilters): Promise<Deal[]>;
+  /** Newest first. `country` (ISO alpha-2) is filtered client-side; `limit` max 100 */
+  searchPrices(filters: PriceSearchFilters): Promise<Price[]>;
+  getProductPrices(barcode: string, filters?: Omit<PriceSearchFilters, 'barcode'>): Promise<Price[]>;
+  getRecentPrices(limit?: number, filters?: Omit<PriceSearchFilters, 'limit'>): Promise<Price[]>;
+  /** One CurrencyPriceStats entry per currency; null without prices */
+  getPriceStats(barcode: string, filters?: Omit<PriceSearchFilters, 'barcode'>): Promise<PriceStats | null>;
+  /** Lowest price per currency, most-reported currency first */
+  findBestPrices(barcode: string, filters?: Omit<PriceSearchFilters, 'barcode'>): Promise<Price[]>;
+  /** Monthly median, min and max per currency over the last `months` (default 12) */
+  getPriceHistory(barcode: string, months?: number, currency?: string): Promise<PriceHistoryPoint[]>;
+  /** Median and best price per product in one currency (the most common one by default),
+   *  plus price per kg/L when the package quantity is known */
+  comparePrices(products: Product[], currency?: string): Promise<PriceComparison | null>;
 }
+
+function median(values: number[]): number;
+function statsByCurrency(prices: Price[]): CurrencyPriceStats[];
+/** "400 g", "1,5 L", "6 x 33 cl" → grams or millilitres */
+function quantityInGramsOrMl(quantity: string | undefined): number | undefined;
 ```
 
-## RecipeService
+## RecallService
 
-Analyzes recipes and meals.
+`recall.service.ts`. US food recalls from the [openFDA food enforcement](https://open.fda.gov/apis/food/enforcement/) API (updated weekly).
 
 ```typescript
-class RecipeService {
-  constructor(productService: ProductService);
-
-  // Analyze recipe nutrition
-  async analyzeRecipe(
-    ingredients: RecipeIngredient[],
-    servings?: number
-  ): Promise<RecipeAnalysis>;
-
-  // Scale recipe
-  scaleRecipe(
-    ingredients: RecipeIngredient[],
-    originalServings: number,
-    targetServings: number
-  ): ScaledRecipe;
-
-  // Suggest substitutes
-  async suggestSubstitutes(
-    ingredient: string,
-    reason?: SubstitutionReason
-  ): Promise<Substitute[]>;
-
-  // Analyze complete meal
-  async analyzeMeal(items: MealItem[]): Promise<MealAnalysis>;
-}
-
-interface RecipeIngredient {
+interface RecallSearch {
   barcode?: string;
-  name?: string;
-  grams: number;
+  text?: string;          // matched against the product description
+  ongoingOnly?: boolean;  // default false
+  limit?: number;         // default 10
 }
 
-type SubstitutionReason = 'vegan' | 'healthier' | 'allergy' | 'unavailable';
-```
-
-## InsightsService
-
-Generates nutrition insights and trends.
-
-```typescript
-class InsightsService {
-  // Get category trends
-  async getCategoryTrends(
-    category: string,
-    metric: string
-  ): Promise<CategoryTrends>;
-
-  // Get product insights
-  async getProductInsights(barcode: string): Promise<ProductInsights>;
-
-  // Analyze brand
-  async analyzeBrand(brand: string): Promise<BrandAnalysis>;
+class RecallService {
+  /** Barcode matches first (UPC/EAN variants in description and code info), then text matches,
+   *  newest report first */
+  search(query: RecallSearch): Promise<Recall[]>;
 }
+
+function getRecallService(): RecallService;
 ```
 
-## Service Initialization
+Each `Recall` has `recallNumber`, `status` (Ongoing, Completed, Terminated), `classification` (Class I is the most serious), ISO `reportDate` and `recallInitiationDate`, `recallingFirm`, `productDescription`, `reason`, `codeInfo`, `distribution`, `country` and `matchedBy` (`barcode` or `text`). openFDA answers 404 when nothing matches, which becomes an empty list.
 
-Services are initialized with providers and dependencies:
+## AdditiveService
+
+`additive.service.ts`. Enriches additive codes with the Open Food Facts additives taxonomy (downloaded once, cached 24 hours).
 
 ```typescript
-// Create providers
-const providers = [
-  new OpenFoodFactsProvider(),
-  new USDAProvider(),
-  new NutritionixProvider(),
-];
+interface AdditiveDetails extends Additive {
+  classes: string[];          // functions, e.g. "emulsifier"
+  vegan?: string;
+  vegetarian?: string;
+  efsaEvaluationUrl?: string;
+}
 
-// Create services
-const productService = new ProductService(providers);
-const nutritionService = new NutritionService();
-const allergenService = new AllergenService();
-const comparisonService = new ComparisonService(productService);
-const priceService = new PriceService(productService);
-const recipeService = new RecipeService(productService);
-const insightsService = new InsightsService(productService);
+class AdditiveService {
+  /** Names, classes and riskLevel from the EFSA over-exposure risk (high, moderate, low, unknown) */
+  describe(additives: Additive[]): Promise<AdditiveDetails[]>;
+}
+
+function getAdditiveService(): AdditiveService;
 ```
+
+If the taxonomy cannot be loaded, the additives are returned unchanged with empty `classes`.
+
+## Daily values helpers
+
+`daily-values.ts`. Used by every mapper so %DV is consistent across sources.
+
+```typescript
+/** Convert between g, mg and mcg; undefined for other units unless identical */
+function convertUnit(value: number, from: NutrientUnit, to: NutrientUnit): number | undefined;
+
+/** Percent of the FDA Daily Value (DAILY_VALUES in constants.ts), rounded to 0.1 */
+function dailyValuePercent(id: NutrientId, value: number, unit: NutrientUnit): number | undefined;
+```
+
+```typescript
+dailyValuePercent('sodium', 230, 'mg');  // 10
+dailyValuePercent('fiber', 7, 'g');      // 25
+dailyValuePercent('sugars', 50, 'g');    // undefined (only added sugars has a Daily Value)
+```
+
+The Daily Values (adults and children 4+, 2,000 kcal diet, 21 CFR 101.9) are served as `nutri://reference/daily-values`. Examples: sodium 2300 mg, saturated fat 20 g, added sugars 50 g, fiber 28 g, protein 50 g, calcium 1300 mg, iron 18 mg, potassium 4700 mg, vitamin D 20 mcg.

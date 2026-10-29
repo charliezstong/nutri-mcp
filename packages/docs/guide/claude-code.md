@@ -1,148 +1,137 @@
 # Claude Code Setup
 
-Detailed instructions for integrating Nutri-MCP with Claude Code.
+## Add the server
 
-## Adding the Server
-
-### Basic Setup
+From npm (once the package is published):
 
 ```bash
-claude mcp add nutri-mcp -- npx nutri-mcp
+claude mcp add nutri-mcp -- npx -y nutri-mcp
 ```
 
-### With USDA API Key
+From a source checkout (after `pnpm install && pnpm --filter nutri-mcp build`, run from the repository root):
+
+```bash
+claude mcp add nutri-mcp -- node "$(pwd)/packages/core/dist/index.js"
+```
+
+Everything after `--` is the command Claude Code starts; the server talks to it over stdio.
+
+### With API keys
+
+Pass environment variables with `-e`:
 
 ```bash
 claude mcp add nutri-mcp \
-  -e USDA_API_KEY=your-key \
-  -- npx nutri-mcp
-```
-
-### With All Providers
-
-```bash
-claude mcp add nutri-mcp \
+  -e OFF_CONTACT_EMAIL=you@example.com \
   -e USDA_API_KEY=your-usda-key \
+  -- npx -y nutri-mcp
+```
+
+With Nutritionix (paid), which also enables the `estimateNutritionFromText` tool:
+
+```bash
+claude mcp add nutri-mcp \
   -e NUTRITIONIX_APP_ID=your-app-id \
   -e NUTRITIONIX_APP_KEY=your-app-key \
-  -- npx nutri-mcp
+  -- npx -y nutri-mcp
 ```
 
-### With Debug Logging
+### Share with a project
+
+`--scope project` stores the server in `.mcp.json` at the project root so everyone working in the repository gets it:
 
 ```bash
-claude mcp add nutri-mcp \
-  -e LOG_LEVEL=debug \
-  -e USDA_API_KEY=your-key \
-  -- npx nutri-mcp
+claude mcp add --scope project nutri-mcp -- npx -y nutri-mcp
 ```
 
-## Verifying the Connection
+```json
+{
+  "mcpServers": {
+    "nutri-mcp": {
+      "command": "npx",
+      "args": ["-y", "nutri-mcp"],
+      "env": {}
+    }
+  }
+}
+```
 
-Check that the server is connected:
+Use `--scope user` to make it available in all your projects.
+
+### Connect to a running HTTP server
+
+If Nutri-MCP runs in [HTTP mode](/guide/http-transport), add it by URL instead of a command:
+
+```bash
+claude mcp add --transport http nutri-mcp http://127.0.0.1:3000/mcp
+```
+
+## Verify
 
 ```bash
 claude mcp list
 ```
 
-Expected output:
+Inside a session, `/mcp` shows the connection status and the server's tools, resources and prompts. Prompts appear as slash commands, for example `/mcp__nutri-mcp__analyze-product`.
 
-```
-nutri-mcp: ... - Connected
-```
+## Try it
 
-## Removing the Server
+> "What's the nutrition for barcode 3017620422003?"
+
+> "Rank 3017620422003 and 7622210449283 by sugar."
+
+> "Check whether 3017620422003 is vegan and explain why."
+
+> "Are there ongoing FDA recalls for peanut butter?"
+
+## Remove
 
 ```bash
 claude mcp remove nutri-mcp
 ```
-
-## Using a Local Installation
-
-If you prefer a local installation over npx:
-
-```bash
-# Install globally
-npm install -g nutri-mcp
-
-# Add to Claude Code
-claude mcp add nutri-mcp -- nutri-mcp
-```
-
-## Using From Source
-
-For development or customization:
-
-```bash
-# Clone and build
-git clone https://github.com/nutrimcp/nutri-mcp.git
-cd nutri-mcp/packages/core
-pnpm install
-pnpm build
-
-# Add to Claude Code (use absolute path)
-claude mcp add nutri-mcp -- node /path/to/nutri-mcp/packages/core/dist/index.js
-```
-
-## Testing the Integration
-
-Once configured, ask Claude:
-
-> "What's the nutritional information for product barcode 3017620422003?"
-
-Claude will use Nutri-MCP to fetch data from Open Food Facts and return detailed nutrition information for Nutella.
 
 ## Troubleshooting
 
-### Server Not Connecting
+### The server does not connect
 
-1. Check that Node.js 20+ is installed:
+1. Check Node.js 20 or later:
    ```bash
    node --version
    ```
-
-2. Try running the server directly:
+2. Run the command yourself to see startup errors (invalid environment variables are reported on stderr):
    ```bash
-   npx nutri-mcp
+   npx -y nutri-mcp
    ```
+3. For a source checkout, make sure you built it and used an absolute path to `packages/core/dist/index.js`.
 
-3. Check for errors in the output
+### A tool is missing
 
-### Tools Not Available
+- `estimateNutritionFromText` only exists when both `NUTRITIONIX_APP_ID` and `NUTRITIONIX_APP_KEY` are set and `ENABLE_NUTRITIONIX` is not `false`.
+- `checkRecalls` is not registered when `ENABLE_RECALLS=false`.
 
-1. Remove and re-add the server:
-   ```bash
-   claude mcp remove nutri-mcp
-   claude mcp add nutri-mcp -- npx nutri-mcp
-   ```
+After changing variables, remove and re-add the server, then restart the session.
 
-2. Restart Claude Code
+### USDA data does not show up
 
-### API Key Issues
+Check the key directly:
 
-1. Verify the key is correct:
-   ```bash
-   # Test USDA key
-   curl "https://api.nal.usda.gov/fdc/v1/foods/search?query=apple&api_key=YOUR_KEY"
-   ```
+```bash
+curl "https://api.nal.usda.gov/fdc/v1/foods/search?query=apple&pageSize=1&api_key=YOUR_KEY"
+```
 
-2. Re-add with the correct key:
-   ```bash
-   claude mcp remove nutri-mcp
-   claude mcp add nutri-mcp -e USDA_API_KEY=correct-key -- npx nutri-mcp
-   ```
+USDA only covers US branded foods; most European barcodes come from Open Food Facts alone. The `sources` field of each product shows which sources contributed.
 
-### Debug Mode
-
-Enable debug logging to see detailed request/response information:
+### Debug logging
 
 ```bash
 claude mcp remove nutri-mcp
-claude mcp add nutri-mcp -e LOG_LEVEL=debug -- npx nutri-mcp
 ```
 
-Debug output appears in stderr and includes:
-- API requests and responses
-- Cache hits and misses
-- Rate limiter status
-- Circuit breaker state changes
+```bash
+claude mcp add nutri-mcp \
+  -e LOG_LEVEL=debug \
+  -e LOG_FILE=/tmp/nutri-mcp.log \
+  -- npx -y nutri-mcp
+```
+
+Debug logs include cache hits; failed upstream requests are logged as warnings with API keys redacted from URLs. Follow them with `tail -f /tmp/nutri-mcp.log`.

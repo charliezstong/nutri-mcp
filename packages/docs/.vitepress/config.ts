@@ -5,7 +5,7 @@ export default defineConfig({
   description: 'Multi-source nutrition MCP server for AI assistants',
   
   head: [
-    ['link', { rel: 'icon', href: '/favicon.ico' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
     ['meta', { name: 'theme-color', content: '#10b981' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'Nutri-MCP' }],
@@ -19,10 +19,10 @@ export default defineConfig({
       { text: 'Tools', link: '/tools/overview' },
       { text: 'API', link: '/api/providers' },
       {
-        text: '1.0.0',
+        text: '0.2.0',
         items: [
           { text: 'Changelog', link: '/changelog' },
-          { text: 'GitHub', link: 'https://github.com/nutrimcp/nutri-mcp' }
+          { text: 'GitHub', link: 'https://github.com/charliezstong/nutri-mcp' }
         ]
       }
     ],
@@ -67,11 +67,12 @@ export default defineConfig({
             { text: 'Overview', link: '/tools/overview' },
             { text: 'Product Tools', link: '/tools/product' },
             { text: 'Nutrition Tools', link: '/tools/nutrition' },
-            { text: 'Allergen Tools', link: '/tools/allergen' },
+            { text: 'Allergen & Diet Tools', link: '/tools/allergen' },
             { text: 'Comparison Tools', link: '/tools/comparison' },
             { text: 'Price Tools', link: '/tools/price' },
-            { text: 'Recipe Tools', link: '/tools/recipe' },
+            { text: 'Recipe & Meal Tools', link: '/tools/recipe' },
             { text: 'Insights Tools', link: '/tools/insights' },
+            { text: 'Safety Tools', link: '/tools/safety' },
           ]
         }
       ],
@@ -88,7 +89,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/nutrimcp/nutri-mcp' },
+      { icon: 'github', link: 'https://github.com/charliezstong/nutri-mcp' },
       { icon: 'npm', link: 'https://www.npmjs.com/package/nutri-mcp' }
     ],
 
@@ -102,12 +103,12 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern: 'https://github.com/nutrimcp/nutri-mcp/edit/main/packages/docs/:path',
+      pattern: 'https://github.com/charliezstong/nutri-mcp/edit/main/packages/docs/:path',
       text: 'Edit this page on GitHub'
     }
   },
 
   sitemap: {
-    hostname: 'https://nutrimcp.com'
+    hostname: 'https://nutri-mcp.com'
   }
 })

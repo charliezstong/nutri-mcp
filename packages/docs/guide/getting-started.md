@@ -1,86 +1,87 @@
 # Getting Started
 
-Get Nutri-MCP running with Claude Code in under 5 minutes.
+Get Nutri-MCP running in Claude Code in a few minutes.
 
 ## Prerequisites
 
-- Node.js 20 or higher
-- Claude Code or Claude Desktop
-- (Optional) API keys for USDA and/or Nutritionix
+- Node.js 20 or later
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), Claude Desktop or another MCP host
+- Optional: a free [USDA FoodData Central API key](https://fdc.nal.usda.gov/api-key-signup) and/or paid Nutritionix credentials
 
-## Quick Install
+## Add the server
 
-### Option 1: npx (Recommended)
+### From npm
 
-No installation required. Add directly to Claude Code:
+Once the `nutri-mcp` package is published:
 
 ```bash
-claude mcp add nutri-mcp -- npx nutri-mcp
+claude mcp add nutri-mcp -- npx -y nutri-mcp
 ```
 
-### Option 2: Global Install
+::: tip Not published yet?
+The npm package is published from version tags by the release workflow. Until the first release, run the server from source.
+:::
+
+### From source
 
 ```bash
-npm install -g nutri-mcp
-claude mcp add nutri-mcp -- nutri-mcp
-```
-
-### Option 3: From Source
-
-```bash
-git clone https://github.com/nutrimcp/nutri-mcp.git
-cd nutri-mcp/packages/core
+git clone https://github.com/charliezstong/nutri-mcp.git
+cd nutri-mcp
 pnpm install
-pnpm build
-claude mcp add nutri-mcp -- node /path/to/nutri-mcp/packages/core/dist/index.js
+pnpm --filter nutri-mcp build
 ```
 
-## Verify Installation
+Register the built entry point with an absolute path:
 
-Check that the server is connected:
+```bash
+claude mcp add nutri-mcp -- node "$(pwd)/packages/core/dist/index.js"
+```
+
+## Verify
 
 ```bash
 claude mcp list
 ```
 
-You should see:
+`nutri-mcp` should be listed as connected. Inside Claude Code, `/mcp` shows the server with its tools, resources and prompts.
 
-```
-nutri-mcp: ... - Connected
-```
+## Try it
 
-## Test It Out
+Ask Claude:
 
-Ask Claude a nutrition question:
+> "What's the nutrition for barcode 3017620422003?"
 
-> "What's the nutritional information for the product with barcode 3017620422003?"
+> "Find a healthier alternative to Prince biscuits."
 
-Claude will use Nutri-MCP to fetch real data from Open Food Facts and respond with detailed nutrition information.
+> "Check product 7622210449283 against the EU 14 allergens."
 
-## Add API Keys (Optional)
+Claude calls tools such as `getProductByBarcode`, `findHealthierAlternative` or `checkEU14` and answers from the returned data.
 
-For access to more data sources, add API keys:
+## Add optional keys
+
+Open Food Facts, Open Prices and openFDA need no key. To add USDA data and identify yourself to Open Food Facts, re-add the server with environment variables:
 
 ```bash
-# Remove existing server
 claude mcp remove nutri-mcp
-
-# Add with USDA API key
-claude mcp add nutri-mcp \
-  -e USDA_API_KEY=your-key-here \
-  -- npx nutri-mcp
 ```
 
-### Getting API Keys
+```bash
+claude mcp add nutri-mcp \
+  -e OFF_CONTACT_EMAIL=you@example.com \
+  -e USDA_API_KEY=your-usda-key \
+  -- npx -y nutri-mcp
+```
 
-| Provider | Cost | Sign Up |
-|----------|------|---------|
-| Open Food Facts | Free | No key needed |
-| USDA FoodData Central | Free | [fdc.nal.usda.gov](https://fdc.nal.usda.gov/api-key-signup.html) |
-| Nutritionix | Free tier | [developer.nutritionix.com](https://developer.nutritionix.com/) |
+| Variable | Effect |
+|----------|--------|
+| `OFF_CONTACT_EMAIL` | Sent in the User-Agent; Open Food Facts asks API users to identify themselves |
+| `USDA_API_KEY` | Adds USDA FoodData Central branded foods (free key) |
+| `NUTRITIONIX_APP_ID` + `NUTRITIONIX_APP_KEY` | Adds Nutritionix (paid) and the `estimateNutritionFromText` tool |
 
-## Next Steps
+See [Configuration](/guide/configuration) for every variable.
 
-- [Configuration](/guide/configuration) - Environment variables and options
-- [Tools Overview](/tools/overview) - See all 35 available tools
-- [Architecture](/guide/architecture) - Understand the system design
+## Next steps
+
+- [Installation](/guide/installation): Claude Desktop, other hosts, MCP Inspector
+- [Tools Overview](/tools/overview): all tools with examples
+- [HTTP Transport](/guide/http-transport): run Nutri-MCP as a web service

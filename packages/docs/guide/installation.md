@@ -1,211 +1,140 @@
 # Installation
 
-Detailed installation instructions for different environments.
-
 ## Requirements
 
-- **Node.js**: 20.0.0 or higher
-- **Package Manager**: npm, pnpm, or yarn
+- Node.js 20 or later (CI tests Node 20, 22 and 24)
+- pnpm 9 to build from source
 
-## Installation Methods
+## Run with npx
 
-### Using npx (No Install)
-
-The simplest method. Runs directly without installation:
+Once the `nutri-mcp` package is published to npm, no install step is needed:
 
 ```bash
-npx nutri-mcp
+npx -y nutri-mcp
 ```
 
-### Global Installation
+The server speaks MCP over stdio by default, so it waits for a client on stdin. Logs go to stderr.
 
-Install once, use anywhere:
-
-::: code-group
-
-```bash [npm]
-npm install -g nutri-mcp
-```
-
-```bash [pnpm]
-pnpm add -g nutri-mcp
-```
-
-```bash [yarn]
-yarn global add nutri-mcp
-```
-
-:::
-
-### Local Installation
-
-Add to a project:
-
-::: code-group
-
-```bash [npm]
-npm install nutri-mcp
-```
-
-```bash [pnpm]
-pnpm add nutri-mcp
-```
-
-```bash [yarn]
-yarn add nutri-mcp
-```
-
-:::
-
-### From Source
-
-For development or customization:
+## Build from source
 
 ```bash
-# Clone repository
-git clone https://github.com/nutrimcp/nutri-mcp.git
+git clone https://github.com/charliezstong/nutri-mcp.git
 cd nutri-mcp
-
-# Install dependencies
 pnpm install
+pnpm --filter nutri-mcp build
+```
 
-# Build
-pnpm build
+The entry point is `packages/core/dist/index.js`:
 
-# Run
+```bash
 node packages/core/dist/index.js
 ```
 
-## Claude Code Integration
-
-### Add Server
+## Claude Code
 
 ```bash
-# Basic (Open Food Facts only)
-claude mcp add nutri-mcp -- npx nutri-mcp
-
-# With USDA
-claude mcp add nutri-mcp \
-  -e USDA_API_KEY=your-key \
-  -- npx nutri-mcp
-
-# With all providers
-claude mcp add nutri-mcp \
-  -e USDA_API_KEY=your-usda-key \
-  -e NUTRITIONIX_APP_ID=your-app-id \
-  -e NUTRITIONIX_APP_KEY=your-app-key \
-  -- npx nutri-mcp
+claude mcp add nutri-mcp -- npx -y nutri-mcp
 ```
 
-### Verify Connection
+From a source checkout (run from the repository root, or use any absolute path):
 
 ```bash
-claude mcp list
+claude mcp add nutri-mcp -- node "$(pwd)/packages/core/dist/index.js"
 ```
 
-### Remove Server
+See [Claude Code Setup](/guide/claude-code) for API keys, scopes and troubleshooting.
+
+## Claude Desktop
+
+### One-click bundle (.mcpb)
+
+Nutri-MCP ships as an [MCP Bundle](https://github.com/modelcontextprotocol/mcpb). Download `nutri-mcp-<version>.mcpb` from the [GitHub releases](https://github.com/charliezstong/nutri-mcp/releases) and open it with Claude Desktop. The install dialog asks for the optional settings (contact email, USDA key, Nutritionix app id and key).
+
+To build the bundle yourself:
 
 ```bash
-claude mcp remove nutri-mcp
+pnpm --filter nutri-mcp build
+pnpm --filter nutri-mcp pack:mcpb
 ```
 
-## Claude Desktop Integration
+This writes `packages/core/nutri-mcp-<version>.mcpb`. The release workflow (`.github/workflows/release.yml`) builds the same bundle and attaches it to each GitHub release.
 
-Edit the configuration file:
+### Manual configuration
 
-::: code-group
+Alternatively, edit `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`):
 
-```json [macOS]
-// ~/Library/Application Support/Claude/claude_desktop_config.json
+```json
 {
   "mcpServers": {
     "nutri-mcp": {
       "command": "npx",
-      "args": ["nutri-mcp"],
+      "args": ["-y", "nutri-mcp"],
       "env": {
-        "USDA_API_KEY": "your-key"
+        "OFF_CONTACT_EMAIL": "you@example.com",
+        "USDA_API_KEY": "your-usda-key"
       }
     }
   }
 }
 ```
 
-```json [Windows]
-// %APPDATA%\Claude\claude_desktop_config.json
-{
-  "mcpServers": {
-    "nutri-mcp": {
-      "command": "npx",
-      "args": ["nutri-mcp"],
-      "env": {
-        "USDA_API_KEY": "your-key"
-      }
-    }
-  }
-}
+For a source checkout, use `"command": "node"` and `"args": ["/absolute/path/to/nutri-mcp/packages/core/dist/index.js"]`. Restart Claude Desktop after editing.
+
+## Other MCP hosts
+
+Any host that launches stdio servers can use the same command (`npx -y nutri-mcp` or `node .../dist/index.js`). Hosts that connect to remote servers can use [HTTP mode](/guide/http-transport).
+
+## MCP Registry
+
+The server is described in `packages/core/server.json` for the official [MCP Registry](https://registry.modelcontextprotocol.io) under the name `io.github.charliezstong/nutri-mcp` (npm package, stdio transport, optional `OFF_CONTACT_EMAIL`, `USDA_API_KEY`, `NUTRITIONIX_APP_ID`, `NUTRITIONIX_APP_KEY`). The release workflow publishes it when a `v*` tag is pushed.
+
+## MCP Inspector
+
+To browse tools, resources and prompts interactively, build first and then run:
+
+```bash
+pnpm --filter nutri-mcp inspect
 ```
 
-```json [Linux]
-// ~/.config/Claude/claude_desktop_config.json
-{
-  "mcpServers": {
-    "nutri-mcp": {
-      "command": "npx",
-      "args": ["nutri-mcp"],
-      "env": {
-        "USDA_API_KEY": "your-key"
-      }
-    }
-  }
-}
-```
-
-:::
+This starts the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) against `node dist/index.js`.
 
 ## Docker
 
+Nutri-MCP has no official image. A minimal HTTP image, once the npm package is published:
+
 ```dockerfile
-FROM node:20-alpine
+FROM node:22-alpine
 RUN npm install -g nutri-mcp
 ENV TRANSPORT=http
 ENV HTTP_PORT=3000
+ENV HTTP_HOST=0.0.0.0
 EXPOSE 3000
 CMD ["nutri-mcp"]
 ```
 
 ```bash
 docker build -t nutri-mcp .
-docker run -p 3000:3000 -e USDA_API_KEY=your-key nutri-mcp
+docker run -p 3000:3000 -e USDA_API_KEY=your-usda-key nutri-mcp
 ```
+
+`HTTP_HOST=0.0.0.0` is needed inside a container because the server binds to `127.0.0.1` by default. Do not expose it to untrusted networks without a reverse proxy; see [HTTP Transport](/guide/http-transport#security).
 
 ## Troubleshooting
 
-### Command not found
-
-Ensure Node.js 20+ is installed:
+**Check the Node.js version**
 
 ```bash
 node --version
 ```
 
-### Permission errors
-
-Try with sudo (Linux/macOS) or run as administrator (Windows):
+**Run the server directly to see startup errors.** Invalid environment variables stop the server with a message such as `Invalid environment configuration: HTTP_PORT: ...`.
 
 ```bash
-sudo npm install -g nutri-mcp
+LOG_LEVEL=debug npx -y nutri-mcp
 ```
 
-### Connection issues
-
-Check the server is running:
+**Keep logs in a file.** Logs always go to stderr (stdout is reserved for JSON-RPC); `LOG_FILE` mirrors them to a file:
 
 ```bash
-claude mcp list
-```
-
-Enable debug logging:
-
-```bash
-claude mcp add nutri-mcp -e LOG_LEVEL=debug -- npx nutri-mcp
+claude mcp add nutri-mcp -e LOG_LEVEL=debug -e LOG_FILE=/tmp/nutri-mcp.log -- npx -y nutri-mcp
 ```
