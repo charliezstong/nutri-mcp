@@ -1,0 +1,23 @@
+{
+  "fdcId": 2041155,
+  "description": "HAZELNUT SPREAD WITH COCOA",
+  "dataType": "Branded",
+  "publicationDate": "2021-10-28",
+  "gtinUpc": "009800895007",
+  "brandOwner": "Ferrero U.S.A., Incorporated",
+  "brandedFoodCategory": "Nut & Seed Butters",
+  "ingredients": "SUGAR, PALM OIL, HAZELNUTS, SKIM MILK, COCOA, SOY LECITHIN, VANILLIN.",
+  "servingSize": 37,
+  "servingSizeUnit": "g",
+  "packageWeight": "13 oz/371 g",
+  "foodNutrients": [
+    { "type": "FoodNutrient", "id": 1, "amount": 541, "nutrient": { "id": 1008, "number": "208", "name": "Energy", "unitName": "kcal" } },
+    { "type": "FoodNutrient", "id": 2, "amount": 5.41, "nutrient": { "id": 1003, "number": "203", "name": "Protein", "unitName": "g" } },
+    { "type": "FoodNutrient", "id": 3, "amount": 29.7, "nutrient": { "id": 1004, "number": "204", "name": "Total lipid (fat)", "unitName": "g" } },
+    { "type": "FoodNutrient", "id": 4, "amount": 56.8, "nutrient": { "id": 2000, "number": "269", "name": "Total Sugars", "unitName": "g" } },
+    { "type": "FoodNutrient", "id": 5, "amount": 41, "nutrient": { "id": 1093, "number": "307", "name": "Sodium, Na", "unitName": "mg" } },
+    { "type": "FoodNutrient", "id": 6, "amount": 108, "nutrient": { "id": 1087, "number": "301", "name": "Calcium, Ca", "unitName": "mg" } },
+    { "type": "FoodNutrient", "id": 7, "amount": 1.46, "nutrient": { "id": 1089, "number": "303", "name": "Iron, Fe", "unitName": "mg" } },
+    { "type": "FoodNutrient", "id": 8, "amount": 0, "nutrient": { "id": 1114, "number": "324", "name": "Vitamin D (D2 + D3)", "unitName": "µg" } }
+  ]
+}

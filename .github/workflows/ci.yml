@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly live check against the real APIs (detects upstream schema changes)
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    defaults:
+      run:
+        working-directory: packages/core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test:coverage
+      - run: pnpm build
+
+  mcp:
+    name: MCP Inspector + conformance
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    defaults:
+      run:
+        working-directory: packages/core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Inspector CLI (stdio) lists every tool
+        run: |
+          count=$(npx -y @modelcontextprotocol/inspector@2 --cli node dist/index.js --method tools/list | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).tools.length))")
+          echo "tools: $count"
+          test "$count" -ge 38
+      - name: Start HTTP server
+        run: |
+          TRANSPORT=http HTTP_PORT=3000 node dist/index.js &
+          for i in $(seq 1 20); do curl -sf localhost:3000/health && break; sleep 0.5; done
+      - name: MCP conformance (protocol scenarios)
+        run: |
+          for scenario in server-initialize ping tools-list resources-list prompts-list dns-rebinding-protection; do
+            npx -y @modelcontextprotocol/conformance@0.1.16 server --url http://localhost:3000/mcp --scenario "$scenario"
+          done
+
+  live:
+    name: Live API smoke tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: packages/core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:live

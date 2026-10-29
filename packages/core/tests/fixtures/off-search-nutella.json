@@ -1,0 +1,53 @@
+{
+ "hits": [
+  {
+   "code": "0009800800049",
+   "brands": [
+    "Nutella"
+   ],
+   "categories_tags": [
+    "en:snacks"
+   ],
+   "nova_group": 3,
+   "nutriscore_grade": "e",
+   "product_name": "Nutella & go! hazelnut spread + breadsticks",
+   "image_front_small_url": "https://images.openfoodfacts.org/images/products/000/980/080/0049/front_en.5.200.jpg"
+  },
+  {
+   "code": "0098008952506",
+   "brands": [
+    "Nutella"
+   ],
+   "nutriscore_grade": "unknown",
+   "product_name": "Nutella",
+   "image_front_small_url": "https://images.openfoodfacts.org/images/products/009/800/895/2506/front_en.3.200.jpg"
+  },
+  {
+   "code": "0613460834124",
+   "brands": [
+    "Nutella"
+   ],
+   "categories_tags": [
+    "en:breakfasts",
+    "en:spreads",
+    "en:sweet-spreads",
+    "fr:pates-a-tartiner",
+    "en:chocolate-spreads"
+   ],
+   "nutriscore_grade": "e",
+   "product_name": "nutella",
+   "image_front_small_url": "https://images.openfoodfacts.org/images/products/061/346/083/4124/front_en.3.200.jpg"
+  }
+ ],
+ "aggregations": null,
+ "facets": {},
+ "charts": {},
+ "page": 1,
+ "page_size": 3,
+ "page_count": 211,
+ "took": 5,
+ "timed_out": false,
+ "count": 631,
+ "is_count_exact": true,
+ "warnings": null
+}

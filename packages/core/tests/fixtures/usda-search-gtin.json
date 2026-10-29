@@ -1,0 +1,17 @@
+{
+  "totalHits": 1,
+  "currentPage": 1,
+  "totalPages": 1,
+  "foods": [
+    {
+      "fdcId": 2041155,
+      "description": "HAZELNUT SPREAD WITH COCOA",
+      "dataType": "Branded",
+      "gtinUpc": "009800895007",
+      "brandOwner": "Ferrero U.S.A., Incorporated",
+      "foodNutrients": [
+        { "nutrientId": 1008, "nutrientName": "Energy", "nutrientNumber": "208", "unitName": "KCAL", "value": 541 }
+      ]
+    }
+  ]
+}

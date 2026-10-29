@@ -1,0 +1,65 @@
+{
+ "meta": {
+  "last_updated": "2026-10-21",
+  "results": {
+   "skip": 0,
+   "limit": 2,
+   "total": 633
+  }
+ },
+ "results": [
+  {
+   "status": "Ongoing",
+   "city": "Connelly Springs",
+   "state": "NC",
+   "country": "United States",
+   "classification": "Class II",
+   "openfda": {},
+   "product_type": "Food",
+   "event_id": "99803",
+   "recalling_firm": "Best Friends Bakery, LLC",
+   "address_1": "101 Fashion Ave",
+   "address_2": "N/A",
+   "postal_code": "28612-7483",
+   "voluntary_mandated": "Voluntary: Firm initiated",
+   "initial_firm_notification": "E-Mail",
+   "distribution_pattern": "Product was shipped to the following states: AL, FL, GA, IN, KY, MI, OH, TN, VA &  WV.",
+   "recall_number": "H-1386-2026",
+   "product_description": "PUMPKIN SPICE NO BAKE COOKIE NET WT 3.5 oz. INGREDIENTS: WHOLE GRAIN OATS, MILK, MARGARINE***WATER, SALT, CONTAINS LESS THAN 2% OF THE FOLLOWING: SOY LECITHIN, VEGETABLE MONO & DIGLYCERIDES, POTASSIUM SORBATE***, CITRIC ACID, NATURAL & ARTIFICIAL FLAVOR, BETA CAROTENE, VITAMIN A PALMITATE ADDED, PEANUT BUTTER***VANILLA***PUMPKIN PIE SPICE***GLYCERINE, PAPRIKA OLEORESINM, POTASSIUM SORBATE CONTAINS: EGG, MILK, SOY, WHEAT MADE IN A FACILITY WITH PEANUTS AND TREE NUTS UPC 8 10158 14087 5 Michelle's Bakery 101 Fashion Ave Connelly Springs, NC 28612",
+   "product_quantity": "1,416/3.5oz cookies",
+   "reason_for_recall": "Peanuts & Eggs. The firm list peanuts in the ingredient statement but omitted them from the contain statement. They also have eggs listed in the contain statement but there are no eggs in the product.",
+   "recall_initiation_date": "20260817",
+   "center_classification_date": "20260916",
+   "report_date": "20260923",
+   "code_info": "Lot 20326",
+   "more_code_info": ""
+  },
+  {
+   "status": "Terminated",
+   "city": "Boise",
+   "state": "ID",
+   "country": "United States",
+   "classification": "Class II",
+   "openfda": {},
+   "product_type": "Food",
+   "event_id": "98953",
+   "recalling_firm": "Albertsons Companies LLC",
+   "address_1": "250 E Park Center Blvd",
+   "address_2": "",
+   "postal_code": "83726-0020",
+   "voluntary_mandated": "Voluntary: Firm initiated",
+   "initial_firm_notification": "E-Mail",
+   "distribution_pattern": "Nationwide.",
+   "recall_number": "H-1034-2026",
+   "product_description": "UPC 24144500000 Ready Meals PEANUT BUTTER CHOCOLATE CHIP BAR With PRETZEL                       This is Albertson's store-made item and sold by unit at point of sale with grocery store's scale label.",
+   "product_quantity": "128 units",
+   "reason_for_recall": "Contains statement does not declare Almond",
+   "recall_initiation_date": "20260506",
+   "center_classification_date": "20260618",
+   "termination_date": "20260702",
+   "report_date": "20260610",
+   "code_info": "Product was labeled with a Packed On date of May 05. 26 or before.",
+   "more_code_info": ""
+  }
+ ]
+}

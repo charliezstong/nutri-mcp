@@ -1,0 +1,253 @@
+{
+ "code": "7622210449283",
+ "errors": [],
+ "product": {
+  "additives_tags": [
+   "en:e322",
+   "en:e322i",
+   "en:e500",
+   "en:e503"
+  ],
+  "allergens_tags": [
+   "en:eggs",
+   "en:gluten",
+   "en:milk",
+   "en:soybeans"
+  ],
+  "brands": "Mondelez Schweiz GmbH",
+  "categories_tags": [
+   "en:snacks",
+   "en:sweet-snacks",
+   "en:biscuits-and-cakes",
+   "en:biscuits-and-crackers",
+   "en:biscuits",
+   "en:chocolate-biscuits"
+  ],
+  "code": "7622210449283",
+  "completeness": 0.9,
+  "countries_tags": [
+   "en:algeria",
+   "en:belgium",
+   "en:canada",
+   "en:france",
+   "en:french-polynesia",
+   "en:germany",
+   "en:guadeloupe",
+   "en:hungary",
+   "en:luxembourg",
+   "en:martinique",
+   "en:morocco",
+   "en:new-caledonia",
+   "en:reunion",
+   "en:spain",
+   "en:switzerland",
+   "en:united-kingdom",
+   "en:united-states"
+  ],
+  "environmental_score_grade": "e",
+  "environmental_score_score": 27,
+  "generic_name": "BISCUITS FOURRÉS (35%) PARFUM CHOCOLAT",
+  "image_front_small_url": "https://images.openfoodfacts.org/images/products/762/221/044/9283/front_en.605.200.jpg",
+  "image_front_url": "https://images.openfoodfacts.org/images/products/762/221/044/9283/front_en.605.400.jpg",
+  "image_ingredients_url": "https://images.openfoodfacts.org/images/products/762/221/044/9283/ingredients_fr.690.400.jpg",
+  "image_nutrition_url": "https://images.openfoodfacts.org/images/products/762/221/044/9283/nutrition_fr.746.400.jpg",
+  "image_url": "https://images.openfoodfacts.org/images/products/762/221/044/9283/front_en.605.400.jpg",
+  "ingredients_analysis_tags": [
+   "en:palm-oil",
+   "en:non-vegan",
+   "en:maybe-vegetarian"
+  ],
+  "ingredients_text": "Céréale 50 % (Farine de blé 34,8 %, farine de blé complet 15,2 %), sucre, huiles végétales (palme, colza), cacao maigre en poudre 4,5 %, sirop de glucose, amidon de blé, poudres à lever (carbonates d'ammonium, carbonates de sodium), émulsifiant (lécithines de soja), sel, lait écrémé en poudre, perméat de lactosérum (de lait), arômes. Peut contenir œuf.",
+  "labels_tags": [
+   "en:distributor-labels",
+   "en:charte-lu-harmony",
+   "fr:triman"
+  ],
+  "last_modified_t": 1793195206,
+  "nova_group": 4,
+  "nutriments": {
+   "added-sugars_100g": 0,
+   "added-sugars_serving": 0,
+   "added-sugars_unit": "g",
+   "carbohydrates_100g": 69,
+   "carbohydrates_serving": 13.8,
+   "carbohydrates_unit": "g",
+   "energy-kcal_100g": 467,
+   "energy-kcal_serving": 93.4,
+   "energy-kcal_unit": "kcal",
+   "energy-kj_100g": 1962,
+   "energy-kj_serving": 392,
+   "energy-kj_unit": "kJ",
+   "energy_100g": 1962,
+   "energy_serving": 392,
+   "energy_unit": "kJ",
+   "fat_100g": 17,
+   "fat_serving": 3.4,
+   "fat_unit": "g",
+   "fiber_100g": 4,
+   "fiber_serving": 0.8,
+   "fiber_unit": "g",
+   "fruits-vegetables-legumes-estimate-from-ingredients_100g": 0,
+   "fruits-vegetables-nuts-estimate-from-ingredients_100g": 5.94,
+   "nova-group_100g": 4,
+   "nova-group_serving": 4,
+   "nova-group_unit": "",
+   "proteins_100g": 6.3,
+   "proteins_serving": 1.26,
+   "proteins_unit": "g",
+   "salt_100g": 0.49,
+   "salt_serving": 0.098,
+   "salt_unit": "g",
+   "saturated-fat_100g": 5.6,
+   "saturated-fat_serving": 1.12,
+   "saturated-fat_unit": "g",
+   "sodium_100g": 0.196,
+   "sodium_serving": 0.0392,
+   "sodium_unit": "g",
+   "sugars_100g": 32,
+   "sugars_serving": 6.4,
+   "sugars_unit": "g"
+  },
+  "nutriscore": {
+   "2021": {
+    "category_available": 1,
+    "data": {
+     "energy": 1962,
+     "energy_points": 5,
+     "energy_value": 1962,
+     "fiber": 4,
+     "fiber_points": 4,
+     "fiber_value": 4,
+     "fruits_vegetables_nuts_colza_walnut_olive_oils": 5.94,
+     "fruits_vegetables_nuts_colza_walnut_olive_oils_points": 0,
+     "fruits_vegetables_nuts_colza_walnut_olive_oils_value": 5.9,
+     "is_beverage": 0,
+     "is_cheese": 0,
+     "is_fat": 0,
+     "is_water": 0,
+     "negative_points": 19,
+     "negative_points_max": 0,
+     "positive_points": 4,
+     "positive_points_max": 0,
+     "proteins": 6.3,
+     "proteins_points": 3,
+     "proteins_value": 6.3,
+     "saturated_fat": 5.6,
+     "saturated_fat_points": 5,
+     "saturated_fat_value": 5.6,
+     "sodium": 196.0,
+     "sodium_points": 2,
+     "sodium_value": 196,
+     "sugars": 32,
+     "sugars_points": 7,
+     "sugars_value": 32
+    },
+    "estimated": 0,
+    "grade": "d",
+    "nutrients_available": 1,
+    "nutriscore_applicable": 1,
+    "nutriscore_computed": 1,
+    "preparation": "as_sold",
+    "score": 15
+   },
+   "2023": {
+    "category_available": 1,
+    "data": {
+     "components": {
+      "negative": [
+       {
+        "id": "energy",
+        "points": 5,
+        "points_max": 10,
+        "unit": "kJ",
+        "value": 1962
+       },
+       {
+        "id": "sugars",
+        "points": 9,
+        "points_max": 15,
+        "unit": "g",
+        "value": 32
+       },
+       {
+        "id": "saturated_fat",
+        "points": 5,
+        "points_max": 10,
+        "unit": "g",
+        "value": 5.6
+       },
+       {
+        "id": "salt",
+        "points": 2,
+        "points_max": 20,
+        "unit": "g",
+        "value": 0.49
+       }
+      ],
+      "positive": [
+       {
+        "id": "fiber",
+        "points": 1,
+        "points_max": 5,
+        "unit": "g",
+        "value": 4
+       },
+       {
+        "id": "fruits_vegetables_legumes",
+        "points": 0,
+        "points_max": 5,
+        "unit": "%",
+        "value": 0
+       }
+      ]
+     },
+     "count_proteins": 0,
+     "count_proteins_reason": "negative_points_greater_than_or_equal_to_11",
+     "is_beverage": 0,
+     "is_cheese": 0,
+     "is_fat_oil_nuts_seeds": 0,
+     "is_red_meat_product": 0,
+     "is_water": 0,
+     "negative_points": 21,
+     "negative_points_max": 55,
+     "positive_nutrients": [
+      "fiber",
+      "fruits_vegetables_legumes"
+     ],
+     "positive_points": 1,
+     "positive_points_max": 10
+    },
+    "estimated": 0,
+    "grade": "e",
+    "nutrients_available": 1,
+    "nutriscore_applicable": 1,
+    "nutriscore_computed": 1,
+    "preparation": "as_sold",
+    "score": 20
+   }
+  },
+  "nutriscore_grade": "e",
+  "nutriscore_score": 20,
+  "nutriscore_version": "2023",
+  "nutrition_data": "on",
+  "nutrition_data_prepared_per": "100g",
+  "origins": "",
+  "packaging": "Packet,Hdpe film-packet,Etui en carton,Film en plastique",
+  "product_name": "Prince",
+  "product_quantity": 300,
+  "product_quantity_unit": "g",
+  "quantity": "300 g e",
+  "serving_quantity": 20,
+  "serving_size": "20g",
+  "traces_tags": [
+   "en:eggs"
+  ]
+ },
+ "result": {
+  "id": "product_found",
+  "lc_name": "Product found",
+  "name": "Product found"
+ },
+ "status": "success",
+ "warnings": []
+}
