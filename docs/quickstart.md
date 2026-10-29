@@ -1,168 +1,78 @@
-# Quick Start Guide
+# Quick Start
 
-Get up and running with Nutri-MCP in 5 minutes.
+## Requirements
 
-## Prerequisites
+- Node.js 20 or newer
+- An MCP host: Claude Code, Claude Desktop, or any MCP client
 
-- Node.js 20 or higher
-- Claude Code or Claude Desktop
+## Install
 
-## Installation
-
-### Option 1: From Source
+### Claude Code (npm)
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/nutri-mcp.git
-cd nutri-mcp
-
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Verify installation
-npm test
+claude mcp add nutri-mcp -- npx -y nutri-mcp
 ```
 
-### Option 2: From npm (when published)
+Until the first npm release, use the source install below.
+
+### Claude Desktop (one-click bundle)
+
+Open the `nutri-mcp-<version>.mcpb` file from the GitHub releases, or build it:
 
 ```bash
-npm install -g nutri-mcp
+pnpm install && pnpm --filter nutri-mcp build && pnpm --filter nutri-mcp pack:mcpb
 ```
 
-## Configuration
+The install dialog asks for the optional keys (contact email, USDA, Nutritionix).
 
-### For Claude Code
+### From source
 
-Edit `~/.claude/settings.json`:
+```bash
+git clone https://github.com/charliezstong/nutri-mcp.git
+```
+
+```bash
+cd nutri-mcp && pnpm install && pnpm --filter nutri-mcp build
+```
+
+```bash
+claude mcp add nutri-mcp -- node "$(pwd)/packages/core/dist/index.js"
+```
+
+Other hosts use the same command in their JSON config:
 
 ```json
 {
   "mcpServers": {
     "nutri-mcp": {
-      "command": "node",
-      "args": ["/path/to/nutri-mcp/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "nutri-mcp"],
+      "env": { "OFF_CONTACT_EMAIL": "you@example.com" }
     }
   }
 }
 ```
 
-### For Claude Desktop
+## Verify
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "nutri-mcp": {
-      "command": "node",
-      "args": ["/path/to/nutri-mcp/dist/index.js"]
-    }
-  }
-}
+```bash
+claude mcp list
 ```
 
-## Verify Installation
-
-Restart Claude Code/Desktop, then ask:
-
-> "What nutrition information can you tell me about the product with barcode 3017620422003?"
-
-Claude should use the `getProduct` tool and return detailed information about Nutella.
-
-## Your First Queries
-
-### Get Product Info
-
-> "Look up the product with barcode 5000159407236"
-
-### Compare Products
-
-> "Compare the nutrition of barcodes 3017620422003 and 5000159407236"
-
-### Check Allergens
-
-> "Does the product 3017620422003 contain nuts or milk?"
-
-### Find Healthier Options
-
-> "Find a healthier alternative to product 3017620422003"
-
-### Analyze Diet Compatibility
-
-> "Is product 3017620422003 suitable for a vegan diet?"
-
-## Optional: Add More Data Sources
-
-### USDA FoodData Central (Free)
-
-1. Get API key: [fdc.nal.usda.gov/api-key-signup](https://fdc.nal.usda.gov/api-key-signup.html)
-2. Update config:
-
-```json
-{
-  "mcpServers": {
-    "nutri-mcp": {
-      "command": "node",
-      "args": ["/path/to/nutri-mcp/dist/index.js"],
-      "env": {
-        "USDA_API_KEY": "your-key-here"
-      }
-    }
-  }
-}
+```bash
+npx @modelcontextprotocol/inspector@2 --cli npx -y nutri-mcp --method tools/list
 ```
 
-### Nutritionix (Free tier)
+## Try it
 
-1. Sign up: [developer.nutritionix.com](https://developer.nutritionix.com/)
-2. Update config:
+- "What's the nutrition for barcode 3017620422003?"
+- "Is barcode 7622210449283 safe for someone allergic to wheat and peanuts?"
+- "Compare 3017620422003 and 7622210449283 and tell me which is healthier."
+- "Find a healthier alternative to 7622210449283."
+- "How has the price of 3017620422003 changed this year?"
+- "Are there any ongoing US recalls for peanut butter?"
 
-```json
-{
-  "env": {
-    "NUTRITIONIX_APP_ID": "your-app-id",
-    "NUTRITIONIX_APP_KEY": "your-app-key"
-  }
-}
-```
+## Next steps
 
-## Common Barcodes for Testing
-
-| Barcode | Product | Notes |
-|---------|---------|-------|
-| 3017620422003 | Nutella | Nutri-Score E, high sugar |
-| 5000159407236 | Cadbury Dairy Milk | Chocolate bar |
-| 5449000000996 | Coca-Cola | Beverage |
-| 3228857000166 | Evian Water | Nutri-Score A |
-| 7622210449283 | Oreo Cookies | Snack |
-| 5000112637939 | Heinz Ketchup | Condiment |
-
-## Troubleshooting
-
-### "Tool not found" error
-
-- Ensure the path in your config is correct
-- Restart Claude Code/Desktop after config changes
-- Check server logs: `LOG_LEVEL=debug node dist/index.js`
-
-### "Product not found"
-
-- Verify barcode format (should be EAN-13, UPC-A, or EAN-8)
-- Check if product exists: `https://world.openfoodfacts.org/product/{barcode}`
-- Some regional products may not be in the database
-
-### Slow responses
-
-- First request may be slow (cold start)
-- Subsequent requests should be faster (cached)
-- Check your internet connection
-
-## Next Steps
-
-- Read [TOOLS.md](TOOLS.md) for all available tools
-- Read [CONFIGURATION.md](CONFIGURATION.md) for advanced settings
-- Read [ARCHITECTURE.md](ARCHITECTURE.md) to understand the system
-- Read [PROVIDERS.md](PROVIDERS.md) for data source details
+- Add a free USDA key for US branded foods: see [configuration.md](configuration.md).
+- Browse all tools: [tools.md](tools.md).

@@ -1,13 +1,13 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { ProductService, mergeProducts } from '../../src/services/product.service.js';
 import { resetEnvForTests } from '../../src/config/env.js';
 import { getCache } from '../../src/resilience/cache.js';
 import { ApiError } from '../../src/errors/index.js';
-import { stubFetch, defaultRoutes } from '../helpers/fetch-stub.js';
+import { stubFetch, defaultRoutes, restoreFetch } from '../helpers/fetch-stub.js';
 import { makeProduct, nutrient } from '../helpers/products.js';
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  restoreFetch();
   resetEnvForTests();
   getCache().clear();
 });

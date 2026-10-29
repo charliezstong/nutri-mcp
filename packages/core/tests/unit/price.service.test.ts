@@ -1,7 +1,7 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { PriceService, median, quantityInGramsOrMl, statsByCurrency } from '../../src/services/price.service.js';
 import type { Price } from '../../src/types/price.types.js';
-import { stubFetch, defaultRoutes } from '../helpers/fetch-stub.js';
+import { stubFetch, defaultRoutes, restoreFetch } from '../helpers/fetch-stub.js';
 import { makeProduct } from '../helpers/products.js';
 
 const price = (value: number, currency: string, date: string): Price => ({
@@ -31,7 +31,7 @@ describe('price helpers', () => {
 });
 
 describe('PriceService (Open Prices fixture)', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => restoreFetch());
 
   it('requests newest prices first and maps stores', async () => {
     const fetch = stubFetch(defaultRoutes());

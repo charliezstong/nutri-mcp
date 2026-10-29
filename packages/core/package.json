@@ -14,6 +14,7 @@
   "files": [
     "dist",
     "README.md",
+    "LICENSE",
     "server.json"
   ],
   "scripts": {
@@ -30,7 +31,8 @@
     "clean": "rm -rf dist",
     "inspect": "npx @modelcontextprotocol/inspector@2 node dist/index.js",
     "pack:mcpb": "node scripts/pack-mcpb.mjs",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build && cp ../../README.md README.md && cp ../../LICENSE LICENSE",
+    "docs:tools": "tsx scripts/generate-tool-docs.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/node": "^2.1.2",

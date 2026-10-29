@@ -2,9 +2,9 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { fetchJson, userAgent } from '../../src/resilience/http.js';
 import { getCircuitBreaker } from '../../src/resilience/circuit-breaker.js';
 import { ApiError } from '../../src/errors/index.js';
-import { stubFetch } from '../helpers/fetch-stub.js';
+import { stubFetch, restoreFetch } from '../helpers/fetch-stub.js';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => restoreFetch());
 
 describe('fetchJson', () => {
   it('sends an identifying User-Agent', async () => {
@@ -37,7 +37,7 @@ describe('fetchJson', () => {
     const assertion = expect(promise).rejects.toMatchObject({ statusCode: 503 });
     await vi.runAllTimersAsync();
     await assertion;
-    expect(mock).toHaveBeenCalledTimes(3); // 1 + 2 retries
+    expect(mock.mock.calls).toHaveLength(3); // 1 + 2 retries
     expect(getCircuitBreaker('usda').getStats().failures).toBe(before + 1);
     vi.useRealTimers();
   });

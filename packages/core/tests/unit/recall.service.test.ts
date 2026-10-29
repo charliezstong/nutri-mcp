@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { RecallService } from '../../src/services/recall.service.js';
-import { stubFetch, defaultRoutes } from '../helpers/fetch-stub.js';
+import { stubFetch, defaultRoutes, restoreFetch } from '../helpers/fetch-stub.js';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => restoreFetch());
 
 describe('RecallService', () => {
   it('builds openFDA queries with literal "+" separators', async () => {

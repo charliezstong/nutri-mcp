@@ -29,3 +29,9 @@ coverage/
 # Cache
 .cache/
 *.tsbuildinfo
+
+# MCP bundle build output
+build/
+*.mcpb
+packages/core/README.md
+packages/core/LICENSE

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.charliezstong/nutri-mcp",
+  "title": "Nutri-MCP",
+  "description": "Food nutrition, Nutri-Score, Green-Score, allergens, diets, prices and recalls by barcode",
+  "version": "0.2.0",
+  "websiteUrl": "https://nutri-mcp.com",
+  "repository": {
+    "url": "https://github.com/charliezstong/nutri-mcp",
+    "source": "github",
+    "subfolder": "packages/core"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "nutri-mcp",
+      "version": "0.2.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "OFF_CONTACT_EMAIL",
+          "description": "Contact email sent in the User-Agent, as Open Food Facts asks API users to identify themselves",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "USDA_API_KEY",
+          "description": "USDA FoodData Central API key (free at https://fdc.nal.usda.gov/api-key-signup) for US branded foods",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "NUTRITIONIX_APP_ID",
+          "description": "Nutritionix application id (paid API) for natural-language nutrition",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "NUTRITIONIX_APP_KEY",
+          "description": "Nutritionix application key (paid API)",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

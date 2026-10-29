@@ -1,0 +1,72 @@
+{
+  "manifest_version": "0.3",
+  "name": "nutri-mcp",
+  "display_name": "Nutri-MCP",
+  "version": "0.0.0",
+  "description": "Food nutrition, Nutri-Score, Green-Score, allergens, diets, prices and recalls by barcode.",
+  "long_description": "Look up packaged foods by barcode or name and get nutrients per 100 g and per serving, Nutri-Score (2023) and Green-Score grades, NOVA processing level, allergens (FDA Big 9 / EU 14), diet compatibility, additives, crowdsourced prices (Open Prices) and US FDA recalls. Data from Open Food Facts, with optional USDA FoodData Central and Nutritionix enrichment.",
+  "author": {
+    "name": "NutriMCP Team",
+    "url": "https://github.com/charliezstong/nutri-mcp"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/charliezstong/nutri-mcp"
+  },
+  "homepage": "https://nutri-mcp.com",
+  "documentation": "https://github.com/charliezstong/nutri-mcp#readme",
+  "support": "https://github.com/charliezstong/nutri-mcp/issues",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "OFF_CONTACT_EMAIL": "${user_config.off_contact_email}",
+        "USDA_API_KEY": "${user_config.usda_api_key}",
+        "NUTRITIONIX_APP_ID": "${user_config.nutritionix_app_id}",
+        "NUTRITIONIX_APP_KEY": "${user_config.nutritionix_app_key}"
+      }
+    }
+  },
+  "tools": [],
+  "prompts": [],
+  "keywords": ["nutrition", "food", "barcode", "nutri-score", "allergens", "open food facts", "usda", "recalls"],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=20.0.0"
+    }
+  },
+  "user_config": {
+    "off_contact_email": {
+      "type": "string",
+      "title": "Contact email (optional)",
+      "description": "Sent in the User-Agent; Open Food Facts asks API users to identify themselves.",
+      "required": false
+    },
+    "usda_api_key": {
+      "type": "string",
+      "title": "USDA FoodData Central API key (optional)",
+      "description": "Free key from https://fdc.nal.usda.gov/api-key-signup - adds US branded food data.",
+      "sensitive": true,
+      "required": false
+    },
+    "nutritionix_app_id": {
+      "type": "string",
+      "title": "Nutritionix app id (optional, paid)",
+      "description": "Enables natural-language nutrition estimates.",
+      "required": false
+    },
+    "nutritionix_app_key": {
+      "type": "string",
+      "title": "Nutritionix app key (optional, paid)",
+      "description": "Nutritionix application key.",
+      "sensitive": true,
+      "required": false
+    }
+  }
+}

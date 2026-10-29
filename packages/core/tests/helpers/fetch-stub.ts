@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { vi } from 'vitest';
 
 export function fixture<T = unknown>(name: string): T {
   const path = fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
@@ -15,12 +14,24 @@ export interface Route {
   handler?: (url: URL) => unknown;
 }
 
+type FetchInput = string | URL | Request;
+
+export interface FetchStub {
+  (input: FetchInput, init?: RequestInit): Promise<Response>;
+  mock: { calls: [FetchInput, RequestInit | undefined][] };
+}
+
+const originalFetch = globalThis.fetch;
+
 /**
  * Replace global fetch with a router over fixtures. Unmatched URLs answer 404.
- * Returns the mock so tests can inspect calls.
+ * Framework-agnostic (also used by scripts/generate-tool-docs.ts).
+ * Returns the stub so tests can inspect calls; undo with restoreFetch().
  */
-export function stubFetch(routes: Route[]) {
-  const mock = vi.fn(async (input: string | URL | Request) => {
+export function stubFetch(routes: Route[]): FetchStub {
+  const calls: FetchStub['mock']['calls'] = [];
+  const stub = (async (input: FetchInput, init?: RequestInit) => {
+    calls.push([input, init]);
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
     const route = routes.find((r) => r.match(url));
     if (!route) {
@@ -31,9 +42,14 @@ export function stubFetch(routes: Route[]) {
       status: route.status ?? 200,
       headers: { 'Content-Type': 'application/json' },
     });
-  });
-  vi.stubGlobal('fetch', mock);
-  return mock;
+  }) as FetchStub;
+  stub.mock = { calls };
+  globalThis.fetch = stub as typeof fetch;
+  return stub;
+}
+
+export function restoreFetch(): void {
+  globalThis.fetch = originalFetch;
 }
 
 /** Routes serving every captured fixture */

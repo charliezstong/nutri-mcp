@@ -1,392 +1,80 @@
 # Architecture
 
-## Overview
-
-Nutri-MCP is a multi-source nutrition data server implementing the Model Context Protocol (MCP). It aggregates data from multiple providers and exposes it through a unified tool interface.
+## Layout
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         AI Assistant                             │
-│                    (Claude Code / Desktop)                       │
-└─────────────────────────────────┬───────────────────────────────┘
-                                  │ MCP Protocol
-                                  ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         Nutri-MCP Server                         │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │   Tools     │  │  Resources  │  │   Prompts   │              │
-│  │  (35 total) │  │  (5 guides) │  │ (6 prompts) │              │
-│  └──────┬──────┘  └─────────────┘  └─────────────┘              │
-│         │                                                        │
-│  ┌──────▼──────────────────────────────────────────────────┐    │
-│  │                    Services Layer                        │    │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐    │    │
-│  │  │ Product  │ │Nutrition │ │ Allergen │ │   Price  │    │    │
-│  │  │ Service  │ │ Service  │ │ Service  │ │  Service │    │    │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘    │    │
-│  │                    ┌──────────┐                          │    │
-│  │                    │Comparison│                          │    │
-│  │                    │ Service  │                          │    │
-│  │                    └──────────┘                          │    │
-│  └──────────────────────────┬───────────────────────────────┘    │
-│                             │                                    │
-│  ┌──────────────────────────▼───────────────────────────────┐    │
-│  │                   Providers Layer                         │    │
-│  │  ┌────────────────┐ ┌────────────┐ ┌────────────────┐    │    │
-│  │  │ Open Food Facts│ │    USDA    │ │  Nutritionix   │    │    │
-│  │  │    Provider    │ │  Provider  │ │   Provider     │    │    │
-│  │  └────────────────┘ └────────────┘ └────────────────┘    │    │
-│  └──────────────────────────┬───────────────────────────────┘    │
-│                             │                                    │
-│  ┌──────────────────────────▼───────────────────────────────┐    │
-│  │                  Resilience Layer                         │    │
-│  │  ┌────────┐ ┌─────────────┐ ┌────────────┐ ┌─────────┐   │    │
-│  │  │ Cache  │ │Circuit Break│ │Rate Limiter│ │  Retry  │   │    │
-│  │  │ (LRU)  │ │     er      │ │            │ │         │   │    │
-│  │  └────────┘ └─────────────┘ └────────────┘ └─────────┘   │    │
-│  └──────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
-                                  │
-                    ┌─────────────┴─────────────┐
-                    ▼                           ▼
-          ┌─────────────────┐         ┌─────────────────┐
-          │  Open Food Facts│         │      USDA       │
-          │       API       │         │  FoodData API   │
-          └─────────────────┘         └─────────────────┘
-                                              │
-                                      ┌───────┴───────┐
-                                      ▼               ▼
-                            ┌─────────────┐   ┌─────────────┐
-                            │ Nutritionix │   │   Future    │
-                            │     API     │   │  Providers  │
-                            └─────────────┘   └─────────────┘
+packages/core/src/
+├── index.ts            # Entry: serveStdio() or the HTTP transport
+├── server.ts           # createServer(): one McpServer per connection/request
+├── version.ts          # Version read from package.json
+├── config/             # env.ts (zod-validated env), constants.ts (URLs, limits, DVs, thresholds)
+├── providers/          # Product sources: openfoodfacts/, usda/, nutritionix/ (client + mapper + types)
+├── services/           # product (merge), nutrition, allergen, comparison, price, recall, additive, daily-values
+├── tools/              # One module per category + shared.ts (schemas, registerJsonTool helper)
+├── resources/          # Guides, references and the nutri://product/{barcode} template
+├── prompts/            # Prompt templates
+├── ui/                 # MCP Apps view (product-view.html) and its resource
+├── resilience/         # http.ts (fetchJson), circuit-breaker, rate-limiter, retry, cache
+├── transport/          # http.ts (Streamable HTTP), logger.ts (stderr)
+├── types/ errors/ utils/
 ```
 
-## Directory Structure
+## Request flow
 
 ```
-nutri-mcp/
-├── src/
-│   ├── config/                 # Configuration
-│   │   ├── env.ts              # Environment variables (Zod validated)
-│   │   ├── constants.ts        # API URLs, daily values, limits
-│   │   └── index.ts
-│   │
-│   ├── types/                  # TypeScript type definitions
-│   │   ├── common.types.ts     # Shared types (grades, scores)
-│   │   ├── product.types.ts    # Product and comparison types
-│   │   ├── nutrition.types.ts  # Nutrient and analysis types
-│   │   ├── price.types.ts      # Price and deal types
-│   │   └── index.ts
-│   │
-│   ├── providers/              # Data source adapters
-│   │   ├── base.provider.ts    # Abstract base class
-│   │   ├── openfoodfacts/
-│   │   │   ├── client.ts       # HTTP client
-│   │   │   ├── mapper.ts       # Response -> Product mapping
-│   │   │   └── index.ts
-│   │   ├── usda/
-│   │   │   ├── types.ts        # USDA-specific types
-│   │   │   ├── client.ts
-│   │   │   ├── mapper.ts
-│   │   │   └── index.ts
-│   │   ├── nutritionix/
-│   │   │   ├── types.ts
-│   │   │   ├── client.ts
-│   │   │   ├── mapper.ts
-│   │   │   └── index.ts
-│   │   └── index.ts
-│   │
-│   ├── services/               # Business logic
-│   │   ├── product.service.ts  # Product retrieval & aggregation
-│   │   ├── nutrition.service.ts# Nutrition analysis
-│   │   ├── allergen.service.ts # Allergen detection
-│   │   ├── comparison.service.ts# Product comparison
-│   │   ├── price.service.ts    # Price operations
-│   │   └── index.ts
-│   │
-│   ├── tools/                  # MCP tool handlers
-│   │   ├── product/
-│   │   │   ├── schemas.ts      # Zod input schemas
-│   │   │   └── index.ts        # Tool registration
-│   │   ├── nutrition/
-│   │   ├── allergen/
-│   │   ├── comparison/
-│   │   ├── price/
-│   │   ├── recipe/
-│   │   ├── insights/
-│   │   └── index.ts            # All tool registration
-│   │
-│   ├── resources/              # MCP resources
-│   │   └── index.ts            # Guide resources
-│   │
-│   ├── prompts/                # MCP prompts
-│   │   └── index.ts            # Pre-built prompts
-│   │
-│   ├── resilience/             # Fault tolerance
-│   │   ├── cache.ts            # LRU cache with TTL
-│   │   ├── circuit-breaker.ts  # Circuit breaker pattern
-│   │   ├── rate-limiter.ts     # Per-provider rate limiting
-│   │   ├── retry.ts            # Exponential backoff
-│   │   └── index.ts
-│   │
-│   ├── transport/              # Communication
-│   │   ├── logger.ts           # Stderr logging (safe for stdio)
-│   │   ├── http.ts             # HTTP/SSE transport
-│   │   └── index.ts
-│   │
-│   ├── utils/                  # Utilities
-│   │   ├── barcode.ts          # Barcode validation
-│   │   ├── sanitize.ts         # Input sanitization
-│   │   └── index.ts
-│   │
-│   ├── errors/                 # Error types
-│   │   └── index.ts
-│   │
-│   ├── server.ts               # MCP server setup
-│   └── index.ts                # Entry point
-│
-├── tests/
-│   └── unit/                   # Unit tests
-│       ├── barcode.test.ts
-│       ├── cache.test.ts
-│       ├── circuit-breaker.test.ts
-│       └── sanitize.test.ts
-│
-├── docs/                       # Documentation
-├── dist/                       # Compiled output
-└── package.json
+MCP client ──▶ serveStdio / createMcpHandler (era negotiation: 2025 initialize or 2026-07-28)
+                 │
+                 ▼
+            McpServer (SDK v2) ── validates input with the tool's zod schema
+                 │
+                 ▼
+            registerJsonTool handler ── services ── providers ── fetchJson ──▶ upstream APIs
+                 │
+                 ▼
+   { content: [text JSON, resource_link?], structuredContent }  (validated against outputSchema)
+   or { isError: true, content: [message] }
 ```
 
-## Data Flow
+- `registerJsonTool` (tools/shared.ts) converts results to plain JSON, sends them as `structuredContent` and as a text block, adds resource links, sets read-only annotations, and turns exceptions into `isError` results.
+- The HTTP transport is stateless: `createMcpHandler(createServer)` builds a server per request; `toNodeHandler` adapts it to `node:http`. Origin checks and CORS run before the MCP handler.
 
-### 1. Tool Request Flow
+## Resilience
 
-```
-1. AI Assistant calls tool (e.g., getProduct)
-       │
-       ▼
-2. MCP Server receives JSON-RPC request
-       │
-       ▼
-3. Tool handler validates input with Zod
-       │
-       ▼
-4. Service layer orchestrates business logic
-       │
-       ▼
-5. Provider layer fetches from external APIs
-       │
-       ├── Check cache first
-       ├── Check circuit breaker
-       ├── Apply rate limiting
-       └── Retry on failure
-       │
-       ▼
-6. Mapper transforms API response to internal type
-       │
-       ▼
-7. Service processes and enriches data
-       │
-       ▼
-8. Tool handler returns formatted response
-       │
-       ▼
-9. MCP Server sends JSON-RPC response
-```
+`resilience/http.ts` `fetchJson(url, { provider, endpoint, allowNotFound, timeoutMs, init })` is the only way the server calls upstream APIs:
 
-### 2. Multi-Source Aggregation
+1. **Circuit breaker** per provider (`openfoodfacts`, `robotoff`, `openprices`, `usda`, `nutritionix`, `openfda`). Only 5xx, 429, network errors and timeouts count as failures; client errors do not.
+2. **Token-bucket rate limit** per provider/endpoint (`RATE_LIMITS`); waits up to 8 s for a token.
+3. **Timeout** (`REQUEST_TIMEOUT`) and **retries** (2, exponential backoff with jitter) on 429/5xx/network errors.
+4. **404 → null** when `allowNotFound` is set (unknown barcode, no recalls).
+5. Identifying **User-Agent** on every request.
 
-When fetching a product, the system queries multiple sources:
+An LRU cache (`CACHE_TTL`) stores products, searches, prices, recalls, the additives taxonomy and a short negative cache for unknown barcodes.
 
-```
-getProduct("3017620422003")
-       │
-       ▼
-┌──────────────────────────────────────┐
-│         ProductService.get()          │
-└──────────────────────────────────────┘
-       │
-       ├────────────┬────────────┬────────────┐
-       ▼            ▼            ▼            │
-   ┌───────┐   ┌───────┐   ┌───────┐         │
-   │  OFF  │   │ USDA  │   │Nutrix │         │
-   └───┬───┘   └───┬───┘   └───┬───┘         │
-       │           │           │              │
-       ▼           ▼           ▼              │
-   Product?    Product?    Product?          │
-       │           │           │              │
-       └───────────┴───────────┘              │
-                   │                          │
-                   ▼                          │
-           ┌──────────────┐                   │
-           │   Merge &    │◀──────────────────┘
-           │  Deduplicate │
-           └──────────────┘
-                   │
-                   ▼
-           Aggregated Product
-```
+## Units and scoring
 
-## Component Details
+- All nutrient values are per 100 g / 100 ml (`perServing` when the serving size is known).
+- `services/daily-values.ts` converts units before computing % Daily Value (FDA 2016 values in `DAILY_VALUES`).
+- Concerns use UK FSA traffic-light thresholds; "good/excellent source" uses FDA 10 % / 20 % DV; `low_sodium` and `low_sugar` use EU claim thresholds.
 
-### Providers
+## MCP Apps
 
-Each provider implements:
+`ui/product-view.html` is a dependency-free view implementing the MCP Apps postMessage protocol (`ui/initialize`, `ui/notifications/tool-result`, `ui/notifications/size-changed`). `getProductByBarcode` and `compareProducts` reference it via `_meta.ui.resourceUri`; hosts without MCP Apps ignore it. The build copies the HTML to `dist/ui/`.
 
-```typescript
-interface Provider {
-  // Get product by barcode
-  getProduct(barcode: string): Promise<Product | null>;
-  
-  // Search products
-  search(query: string, options?: SearchOptions): Promise<SearchResult>;
-  
-  // Provider identifier
-  readonly source: DataSource;
-}
-```
+## Adding a provider
 
-### Services
+1. Create `providers/<name>/` with a client extending `BaseProvider`, a mapper to `Product`, and raw types.
+2. Override `isConfigured()` if it needs credentials; implement `getProductByBarcode`, `searchProducts` and `supports`.
+3. Call upstream only through `this.fetchWithResilience(url, rateLimitKey, { allowNotFound, init })`.
+4. Add the provider to `CIRCUIT_BREAKER` and `RATE_LIMITS` in `config/constants.ts`, and to the provider list in `services/product.service.ts`.
+5. Record a fixture in `tests/fixtures/`, add a route in `tests/helpers/fetch-stub.ts` and mapper tests.
 
-Services encapsulate business logic:
+## Testing
 
-- **ProductService**: Aggregates data from providers
-- **NutritionService**: Calculates macros, daily values, concerns
-- **AllergenService**: Detects allergens, validates claims
-- **ComparisonService**: Compares products, finds alternatives
-- **PriceService**: Handles price data and calculations
+| Command | What it runs |
+|---------|--------------|
+| `pnpm --filter nutri-mcp test` | Unit tests and an integration suite that calls every tool over Streamable HTTP in both protocol eras, using recorded API fixtures |
+| `pnpm --filter nutri-mcp test:coverage` | Same, with coverage thresholds |
+| `pnpm --filter nutri-mcp test:live` | Smoke tests against the real APIs |
+| `pnpm --filter nutri-mcp docs:tools` | Regenerates the tool reference from the server |
 
-### Resilience
-
-#### Cache
-
-```typescript
-const cache = new LRUCache(1000); // Max 1000 entries
-
-// Auto-evicts least recently used when full
-cache.set('product:123', product, 'product');
-
-// Returns null if expired or missing
-const cached = cache.get<Product>('product:123');
-```
-
-#### Circuit Breaker
-
-```typescript
-const breaker = new CircuitBreaker('openfoodfacts');
-
-// States: CLOSED -> OPEN -> HALF_OPEN -> CLOSED
-await breaker.execute(async () => {
-  return await fetchProduct(barcode);
-});
-
-// After 5 failures: opens circuit
-// After 30s: allows one test request
-// On success: closes circuit
-```
-
-#### Rate Limiter
-
-```typescript
-const limiter = new RateLimiter({
-  'openfoodfacts': { requests: 100, window: 60000 },
-  'usda': { requests: 1000, window: 3600000 },
-});
-
-// Automatically queues if at limit
-await limiter.acquire('openfoodfacts');
-```
-
-## Transport Layer
-
-### stdio Transport
-
-Used by Claude Code and Claude Desktop:
-
-```
-┌─────────────┐         ┌─────────────┐
-│   Claude    │  stdin  │  Nutri-MCP  │
-│    Code     │────────▶│   Server    │
-│             │◀────────│             │
-└─────────────┘  stdout └─────────────┘
-```
-
-**Important**: All logging goes to stderr to avoid corrupting stdout JSON-RPC messages.
-
-### HTTP/SSE Transport
-
-For web applications:
-
-```
-┌─────────────┐         ┌─────────────┐
-│     Web     │   HTTP  │  Nutri-MCP  │
-│    Client   │────────▶│   Server    │
-│             │◀────────│             │
-└─────────────┘   SSE   └─────────────┘
-
-Endpoints:
-- GET  /           → Server info
-- GET  /health     → Health check
-- GET  /sse        → SSE connection
-- POST /mcp        → JSON-RPC requests
-```
-
-## Type System
-
-### Core Types
-
-```typescript
-// Product from any source
-interface Product {
-  barcode: string;
-  name: string;
-  brand?: string;
-  categories: string[];
-  nutrients: Nutrient[];
-  nutriScore?: NutriScore;
-  novaGroup?: NovaGroup;
-  ecoScore?: EcoScore;
-  allergens: string[];
-  sources: DataSource[];
-}
-
-// Normalized nutrient
-interface Nutrient {
-  id: NutrientId;
-  name: string;
-  value: number;
-  unit: 'g' | 'mg' | 'mcg' | 'kcal' | 'kJ' | 'IU';
-  per100g: number;
-  dailyValuePercent?: number;
-  source?: DataSource;
-}
-
-// Data sources
-type DataSource = 'openfoodfacts' | 'usda' | 'nutritionix';
-```
-
-## Error Handling
-
-```typescript
-// Custom errors
-class NutriMCPError extends Error {
-  constructor(
-    message: string,
-    public code: ErrorCode,
-    public details?: unknown
-  ) {
-    super(message);
-  }
-}
-
-// Error codes
-enum ErrorCode {
-  PRODUCT_NOT_FOUND = 'PRODUCT_NOT_FOUND',
-  INVALID_BARCODE = 'INVALID_BARCODE',
-  PROVIDER_ERROR = 'PROVIDER_ERROR',
-  RATE_LIMITED = 'RATE_LIMITED',
-  CIRCUIT_OPEN = 'CIRCUIT_OPEN',
-}
-```
+CI (`.github/workflows/ci.yml`) also runs the MCP Inspector CLI and the protocol scenarios of the official conformance suite. `release.yml` publishes to npm and the MCP Registry and attaches the `.mcpb` bundle.

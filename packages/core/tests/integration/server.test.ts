@@ -1,54 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createServer } from '../../src/server.js';
 import { HttpTransport } from '../../src/transport/http.js';
 import { PRODUCT_VIEW_URI } from '../../src/ui/index.js';
-import { stubFetch, defaultRoutes } from '../helpers/fetch-stub.js';
+import { stubFetch, defaultRoutes, restoreFetch } from '../helpers/fetch-stub.js';
+import { TOOL_CALLS } from '../helpers/tool-calls.js';
 
 const NUTELLA = '3017620422003';
 const PRINCE = '7622210449283';
-
-/** One call per tool, with arguments that hit the fixtures */
-const TOOL_CALLS: Record<string, Record<string, unknown>> = {
-  getProductByBarcode: { barcode: NUTELLA },
-  searchProducts: { query: 'nutella', pageSize: 3 },
-  analyzeNutrition: { barcode: NUTELLA },
-  getNutriScore: { barcode: PRINCE },
-  getGreenScore: { barcode: NUTELLA },
-  calculateDailyIntake: { barcode: PRINCE, servings: 2 },
-  getMacroBreakdown: { barcode: NUTELLA },
-  getNutrientDensity: { barcode: PRINCE },
-  analyzeMeal: { barcodes: [NUTELLA, PRINCE], grams: [15, 40] },
-  getNovaGroup: { barcode: PRINCE },
-  checkAllergen: { barcode: NUTELLA, allergen: 'dairy' },
-  checkMultipleAllergens: { barcode: PRINCE, allergens: ['wheat', 'peanuts'] },
-  checkBig9: { barcode: NUTELLA },
-  checkEU14: { barcode: PRINCE },
-  getAllAllergens: { barcode: PRINCE },
-  getCrossContaminationRisk: { barcode: PRINCE },
-  checkDietCompliance: { barcode: NUTELLA, diet: 'vegan' },
-  getAdditivesInfo: { barcode: PRINCE },
-  compareProducts: { barcodes: [NUTELLA, PRINCE] },
-  findHealthierAlternative: { barcode: NUTELLA, alternativeBarcodes: [PRINCE] },
-  compareNutrientDensity: { barcodes: [NUTELLA, PRINCE] },
-  rankByNutrient: { barcodes: [NUTELLA, PRINCE], nutrient: 'sugars' },
-  getProductPrices: { barcode: NUTELLA, limit: 3 },
-  searchPrices: { barcode: NUTELLA, currency: 'eur' },
-  getPriceStats: { barcode: NUTELLA },
-  findBestPrice: { barcode: NUTELLA },
-  comparePrices: { barcodes: [NUTELLA, PRINCE] },
-  getRecentPrices: { limit: 2 },
-  getPriceHistory: { barcode: NUTELLA, months: 60 },
-  findDeals: { currency: 'EUR' },
-  suggestRecipes: { barcode: NUTELLA, diets: ['vegetarian'] },
-  substituteIngredient: { ingredient: 'huevo', need: 'vegan' },
-  analyzeMealPlan: { meals: [{ name: 'Breakfast', barcodes: [NUTELLA], grams: [20] }, { name: 'Snack', barcodes: [PRINCE] }] },
-  calculateMealCost: { barcodes: [NUTELLA], grams: [20] },
-  getProductInsights: { barcode: NUTELLA },
-  getAIQuestions: { barcode: NUTELLA },
-  qualityCheck: { barcode: PRINCE },
-  checkRecalls: { query: 'peanut butter', limit: 2 },
-};
 
 for (const era of ['legacy', 'modern'] as const) {
   describe(`MCP server over Streamable HTTP (${era} era)`, () => {
@@ -71,7 +30,7 @@ for (const era of ['legacy', 'modern'] as const) {
     afterAll(async () => {
       await client.close();
       await http.handler.close();
-      vi.unstubAllGlobals();
+      restoreFetch();
     });
 
     it('negotiates the expected protocol era', () => {
