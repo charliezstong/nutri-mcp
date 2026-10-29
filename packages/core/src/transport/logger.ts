@@ -11,9 +11,9 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 };
 
 /**
- * Safe logger that doesn't interfere with stdio transport
- * In stdio mode, logs go to file only (never stdout/stderr)
- * In http mode, logs go to console
+ * Logger that is safe for the stdio transport: it never writes to stdout
+ * (reserved for JSON-RPC). Logs go to stderr, which MCP hosts capture, and
+ * are optionally mirrored to LOG_FILE.
  */
 interface ILogger {
   debug(message: string, meta?: unknown): void;
@@ -23,16 +23,24 @@ interface ILogger {
   child(prefix: string): ILogger;
 }
 
+/**
+ * JSON.stringify replacer that keeps Error details (they serialize to {} otherwise).
+ */
+function errorReplacer(_key: string, value: unknown): unknown {
+  if (value instanceof Error) {
+    return { name: value.name, message: value.message, ...(value as unknown as Record<string, unknown>) };
+  }
+  return value;
+}
+
 class Logger implements ILogger {
   private level: LogLevel;
-  private logFile: string;
-  private isStdio: boolean;
+  private logFile: string | undefined;
 
   constructor() {
     const env = getEnv();
     this.level = env.LOG_LEVEL;
     this.logFile = env.LOG_FILE;
-    this.isStdio = env.TRANSPORT === 'stdio';
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -41,16 +49,15 @@ class Logger implements ILogger {
 
   private formatMessage(level: LogLevel, message: string, meta?: unknown): string {
     const timestamp = new Date().toISOString();
-    const metaStr = meta ? ` ${JSON.stringify(meta)}` : '';
-    return `${timestamp} [${level.toUpperCase()}] ${message}${metaStr}`;
-  }
-
-  private writeToFile(message: string): void {
-    try {
-      fs.appendFileSync(this.logFile, message + '\n');
-    } catch {
-      // Silently fail - can't log errors about logging
+    let metaStr = '';
+    if (meta !== undefined) {
+      try {
+        metaStr = ` ${JSON.stringify(meta, errorReplacer)}`;
+      } catch {
+        metaStr = ' [unserializable meta]';
+      }
     }
+    return `${timestamp} [${level.toUpperCase()}] ${message}${metaStr}`;
   }
 
   private log(level: LogLevel, message: string, meta?: unknown): void {
@@ -59,22 +66,13 @@ class Logger implements ILogger {
     }
 
     const formatted = this.formatMessage(level, message, meta);
+    process.stderr.write(formatted + '\n');
 
-    if (this.isStdio) {
-      // In stdio mode, NEVER write to stdout/stderr
-      // Only write to log file
-      this.writeToFile(formatted);
-    } else {
-      // In http mode, write to console
-      switch (level) {
-        case 'error':
-          console.error(formatted);
-          break;
-        case 'warn':
-          console.warn(formatted);
-          break;
-        default:
-          console.log(formatted);
+    if (this.logFile) {
+      try {
+        fs.appendFileSync(this.logFile, formatted + '\n');
+      } catch {
+        // Ignore: logging must never break the server
       }
     }
   }

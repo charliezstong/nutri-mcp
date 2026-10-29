@@ -1,7 +1,7 @@
 import { CIRCUIT_BREAKER } from '../config/constants.js';
 
 type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
-type ProviderName = keyof typeof CIRCUIT_BREAKER;
+export type ProviderName = keyof typeof CIRCUIT_BREAKER;
 
 interface CircuitStats {
   failures: number;

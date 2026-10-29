@@ -1,18 +1,21 @@
 import type { DataSource } from './common.types.js';
 
 /**
- * Price entry from crowdsourced data
+ * Price entry from Open Prices (crowdsourced, backed by receipt/price-tag proofs)
  */
 export interface Price {
   id: string;
   productBarcode: string;
+  productName?: string;
   price: number;
   currency: string;
-  pricePerUnit?: number;
-  unit?: string;
+  isDiscounted: boolean;
+  priceWithoutDiscount?: number;
+  discountType?: string;
   store?: StoreInfo;
   location?: LocationInfo;
-  date: Date;
+  date: string;               // ISO date (YYYY-MM-DD)
+  proofType?: string;         // RECEIPT | PRICE_TAG | ...
   source: DataSource;
 }
 
@@ -22,16 +25,15 @@ export interface Price {
 export interface StoreInfo {
   id?: string;
   name: string;
-  chain?: string;
-  type?: 'supermarket' | 'convenience' | 'online' | 'pharmacy' | 'other';
+  brand?: string;
 }
 
 /**
  * Location information
  */
 export interface LocationInfo {
-  country: string;
-  countryCode: string;
+  country?: string;
+  countryCode?: string;
   city?: string;
   postalCode?: string;
   coordinates?: {
@@ -45,48 +47,64 @@ export interface LocationInfo {
  */
 export interface PriceSearchFilters {
   barcode?: string;
+  /** ISO 3166-1 alpha-2 country code of the store (filtered client-side). */
   country?: string;
   currency?: string;
-  store?: string;
-  minPrice?: number;
-  maxPrice?: number;
-  dateFrom?: Date;
-  dateTo?: Date;
+  discountedOnly?: boolean;
+  dateFrom?: string;          // YYYY-MM-DD
+  limit?: number;
 }
 
 /**
- * Price statistics for a product
+ * Statistics for prices sharing one currency
+ */
+export interface CurrencyPriceStats {
+  currency: string;
+  count: number;
+  min: number;
+  max: number;
+  avg: number;
+  median: number;
+  latest: { price: number; date: string };
+}
+
+/**
+ * Price statistics for a product, split by currency
  */
 export interface PriceStats {
   barcode: string;
-  currency: string;
-  current: {
-    min: number;
-    max: number;
-    avg: number;
-    median: number;
-  };
-  historical?: {
-    thirtyDayAvg: number;
-    ninetyDayAvg: number;
-    yearAvg: number;
-    trend: 'increasing' | 'decreasing' | 'stable';
-  };
   priceCount: number;
-  lastUpdated: Date;
+  byCurrency: CurrencyPriceStats[];
+  firstDate: string;
+  lastDate: string;
 }
 
 /**
- * Price comparison between products
+ * Monthly price history point
+ */
+export interface PriceHistoryPoint {
+  month: string;              // YYYY-MM
+  currency: string;
+  count: number;
+  median: number;
+  min: number;
+  max: number;
+}
+
+/**
+ * Price comparison between products (in one currency)
  */
 export interface PriceComparison {
+  currency: string;
   products: {
     barcode: string;
     name: string;
-    price: Price;
-    pricePerUnit?: number;
+    bestPrice: Price | null;
+    medianPrice: number | null;
+    quantity?: string;
+    /** Median price per kg or per litre, when the package quantity is known. */
+    pricePerKgOrL?: number;
   }[];
-  cheapest: string;           // barcode
-  bestValue?: string;         // barcode (considering nutrition per price)
-  currency: string;
+  cheapest: string | null;      // barcode, by median price
+  bestValue: string | null;     // barcode, by price per kg/L
 }

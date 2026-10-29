@@ -1,4 +1,4 @@
-import type { DataSource, NutrientUnit } from './common.types.js';
+import type { DataSource, NutrientUnit, NutriScoreGrade, GreenScoreGrade } from './common.types.js';
 
 /**
  * Standard nutrient identifiers
@@ -78,33 +78,27 @@ export interface ServingSize {
  * Nutri-Score detailed breakdown
  */
 export interface NutriScore {
-  grade: 'A' | 'B' | 'C' | 'D' | 'E';
-  score: number;                 // -15 to +40
+  grade: NutriScoreGrade;
+  score?: number;                // lower is better
+  version?: '2021' | '2023';
   positive: NutriScoreComponent[];
   negative: NutriScoreComponent[];
 }
 
 export interface NutriScoreComponent {
   id: string;
-  name: string;
-  value: number;
+  value: number | null;
+  unit?: string;
   points: number;
+  pointsMax?: number;
 }
 
 /**
- * Eco-Score detailed breakdown
+ * Green-Score (formerly Eco-Score) environmental impact
  */
-export interface EcoScore {
-  grade: 'A' | 'B' | 'C' | 'D' | 'E';
-  score: number;                 // 0-100
-  components: EcoScoreComponent[];
-}
-
-export interface EcoScoreComponent {
-  id: string;
-  name: string;
-  score: number;
-  description?: string;
+export interface GreenScore {
+  grade: GreenScoreGrade;
+  score?: number;                // 0-100 (can be negative with maluses)
 }
 
 /**

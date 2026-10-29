@@ -1,188 +1,228 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
 import { getProductService } from '../../services/product.service.js';
 import { getComparisonService } from '../../services/comparison.service.js';
-import { getLogger } from '../../transport/logger.js';
-import { formatErrorForMcp, ProductNotFoundError } from '../../errors/index.js';
+import { uiToolMeta } from '../../ui/index.js';
+import type { Product } from '../../types/product.types.js';
 import {
-  compareProductsSchema,
-  findHealthierAlternativeSchema,
-  compareNutrientDensitySchema,
-  rankByNutrientSchema,
-} from './schemas.js';
+  barcodeInput,
+  barcodeListInput,
+  registerJsonTool,
+} from '../shared.js';
 
-const logger = getLogger().child('comparison-tools');
+const KEY_NUTRIENTS = ['energy_kcal', 'fat', 'saturated_fat', 'sugars', 'fiber', 'protein', 'salt'];
+
+const productScoresOutput = z.object({
+  barcode: z.string(),
+  name: z.string(),
+  brand: z.string().optional(),
+  nutriScore: z.string().optional(),
+  greenScore: z.string().optional(),
+  novaGroup: z.number().optional(),
+});
+
+function scores(p: Product): z.infer<typeof productScoresOutput> {
+  return {
+    barcode: p.barcode,
+    name: p.name,
+    brand: p.brand,
+    nutriScore: p.nutriScore?.grade,
+    greenScore: p.greenScore?.grade,
+    novaGroup: p.novaGroup,
+  };
+}
+
+const CORE_NUTRIENTS = ['energy_kcal', 'fat', 'saturated_fat', 'sugars', 'salt', 'protein'];
+
+function hasCoreNutrients(p: Product): boolean {
+  return CORE_NUTRIENTS.every((id) => p.nutrients.some((n) => n.id === id));
+}
+
+async function requireAtLeastTwo(barcodes: string[]): Promise<{ found: Product[]; missing: string[] }> {
+  const result = await getProductService().getMany(barcodes);
+  if (result.found.length < 2) {
+    throw new Error(
+      `Need at least 2 known products to compare; found ${result.found.length}` +
+      (result.missing.length ? ` (not found: ${result.missing.join(', ')})` : ''),
+    );
+  }
+  return result;
+}
 
 export function registerComparisonTools(server: McpServer): void {
   const productService = getProductService();
   const comparisonService = getComparisonService();
 
-  // compareProducts
-  server.tool(
+  registerJsonTool(
+    server,
     'compareProducts',
-    'Compare nutritional profiles of 2-5 products and determine the healthier option',
-    compareProductsSchema.shape,
+    {
+      title: 'Compare products',
+      description:
+        'Compare 2-5 products side by side (Nutri-Score, Green-Score, NOVA and key nutrients per 100 g) and pick the healthier option.',
+      inputSchema: z.object({
+        barcodes: barcodeListInput(2, 5).describe('2-5 product barcodes'),
+      }),
+      outputSchema: z.object({
+        products: z.array(productScoresOutput),
+        missing: z.array(z.string()),
+        winner: z.object({ barcode: z.string(), reason: z.string() }).optional(),
+        summary: z.string(),
+        keyNutrients: z.array(z.object({
+          id: z.string(),
+          name: z.string(),
+          unit: z.string(),
+          values: z.record(z.string(), z.number().nullable()),
+          better: z.string().optional(),
+        })),
+      }),
+      _meta: uiToolMeta(),
+    },
     async ({ barcodes }) => {
-      try {
-        const products = await Promise.all(
-          barcodes.map((b) => productService.getByBarcode(b)),
-        );
+      const { found, missing } = await requireAtLeastTwo(barcodes);
+      const comparison = comparisonService.compare(found);
 
-        const found = products.filter((p) => p !== null);
-        if (found.length < 2) {
-          return {
-            content: [{ type: 'text', text: 'Need at least 2 valid products to compare' }],
-            isError: true,
-          };
-        }
+      const keyNutrients = comparison.comparison.nutritionComparison
+        .filter((c) => KEY_NUTRIENTS.includes(c.nutrientId))
+        .sort((a, b) => KEY_NUTRIENTS.indexOf(a.nutrientId) - KEY_NUTRIENTS.indexOf(b.nutrientId))
+        .map((c) => ({
+          id: c.nutrientId,
+          name: c.name,
+          unit: c.values.find((v) => v.unit)?.unit ?? '',
+          values: Object.fromEntries(c.values.map((v) => [v.barcode, v.value])),
+          better: c.better,
+        }));
 
-        const comparison = comparisonService.compare(found);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              products: comparison.products.map((p) => ({
-                barcode: p.barcode,
-                name: p.name,
-                nutriScore: p.nutriScore?.grade,
-                novaGroup: p.novaGroup,
-              })),
-              winner: comparison.comparison.winner,
-              summary: comparison.comparison.summary,
-              scoreComparison: comparison.comparison.scoreComparison,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      return {
+        products: found.map(scores),
+        missing,
+        winner: comparison.comparison.winner,
+        summary: comparison.comparison.summary,
+        keyNutrients,
+      };
     },
   );
 
-  // findHealthierAlternative
-  server.tool(
+  registerJsonTool(
+    server,
     'findHealthierAlternative',
-    'Find a healthier alternative among provided options',
-    findHealthierAlternativeSchema.shape,
+    {
+      title: 'Find healthier alternative',
+      description:
+        'Find a healthier alternative to a product (better Nutri-Score, less processed, less salt/sugar/saturated fat, more fiber/protein). Pass candidate barcodes, or omit them to search the product\'s own category.',
+      inputSchema: z.object({
+        barcode: barcodeInput.describe('Barcode of the original product'),
+        alternativeBarcodes: barcodeListInput(1, 10).optional().describe('Candidate barcodes; omit to search the same category'),
+      }),
+      outputSchema: z.object({
+        original: productScoresOutput,
+        found: z.boolean(),
+        alternative: productScoresOutput.optional(),
+        improvements: z.array(z.string()),
+        candidatesConsidered: z.number(),
+        searchedCategory: z.string().optional(),
+        message: z.string(),
+      }),
+    },
     async ({ barcode, alternativeBarcodes }) => {
-      try {
-        const original = await productService.getByBarcode(barcode);
-        if (!original) throw new ProductNotFoundError(barcode);
+      const original = await productService.requireByBarcode(barcode);
+      let candidates: Product[];
+      let searchedCategory: string | undefined;
 
-        const alternatives = await Promise.all(
-          alternativeBarcodes.map((b) => productService.getByBarcode(b)),
+      if (alternativeBarcodes && alternativeBarcodes.length > 0) {
+        candidates = (await productService.getMany(alternativeBarcodes)).found;
+      } else {
+        searchedCategory = original.categoryTags?.[original.categoryTags.length - 1];
+        if (!searchedCategory) {
+          throw new Error('The product has no category to search in; pass alternativeBarcodes instead');
+        }
+        const better = original.nutriScore && original.nutriScore.grade !== 'A'
+          ? (['A', 'B', 'C', 'D'] as const)[Math.max(0, ['A', 'B', 'C', 'D', 'E'].indexOf(original.nutriScore.grade) - 1)]
+          : 'B';
+        const search = await productService.search(
+          { category: searchedCategory, nutriScoreMax: better },
+          { page: 1, pageSize: 10 },
+          ['openfoodfacts'],
         );
-
-        const validAlternatives = alternatives.filter((p) => p !== null);
-        if (validAlternatives.length === 0) {
-          return {
-            content: [{ type: 'text', text: 'No valid alternative products found' }],
-            isError: true,
-          };
-        }
-
-        const result = comparisonService.findHealthierAlternative(original, validAlternatives);
-
-        if (!result) {
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                original: original.name,
-                message: 'No healthier alternative found among the provided options',
-              }, null, 2),
-            }],
-          };
-        }
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              original: { name: original.name, nutriScore: original.nutriScore?.grade },
-              alternative: { name: result.alternative.name, nutriScore: result.alternative.nutriScore?.grade },
-              improvements: result.improvements,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
+        // Detail lookups are rate limited; inspect the best few summaries only
+        const shortlist = search.items
+          .filter((s) => s.barcode !== original.barcode)
+          .sort((a, b) => (a.nutriScoreGrade ?? 'Z').localeCompare(b.nutriScoreGrade ?? 'Z') || (a.novaGroup ?? 5) - (b.novaGroup ?? 5))
+          .slice(0, 5)
+          .map((s) => s.barcode);
+        // Skip records too incomplete to compare fairly
+        candidates = (await productService.getMany(shortlist)).found.filter(hasCoreNutrients);
       }
+
+      const result = comparisonService.findHealthierAlternative(original, candidates);
+      return {
+        original: scores(original),
+        found: !!result,
+        alternative: result ? scores(result.alternative) : undefined,
+        improvements: result?.improvements ?? [],
+        candidatesConsidered: candidates.length,
+        searchedCategory,
+        message: result
+          ? `${result.alternative.name} is a healthier alternative to ${original.name}`
+          : 'No healthier alternative found among the candidates',
+      };
     },
   );
 
-  // compareNutrientDensity
-  server.tool(
+  registerJsonTool(
+    server,
     'compareNutrientDensity',
-    'Compare nutrient density (nutrients per calorie) between products',
-    compareNutrientDensitySchema.shape,
+    {
+      title: 'Compare nutrient density',
+      description: 'Rank products by nutrient density (% Daily Value of beneficial nutrients per 100 kcal).',
+      inputSchema: z.object({
+        barcodes: barcodeListInput(2, 10).describe('Product barcodes'),
+      }),
+      outputSchema: z.object({
+        ranking: z.array(z.object({ barcode: z.string(), name: z.string(), density: z.number() })),
+        mostNutrientDense: z.string(),
+        missing: z.array(z.string()),
+      }),
+    },
     async ({ barcodes }) => {
-      try {
-        const products = await Promise.all(
-          barcodes.map((b) => productService.getByBarcode(b)),
-        );
-
-        const found = products.filter((p) => p !== null);
-        if (found.length < 2) {
-          return {
-            content: [{ type: 'text', text: 'Need at least 2 valid products to compare' }],
-            isError: true,
-          };
-        }
-
-        const result = comparisonService.compareNutrientDensity(found);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              ranking: result.ranking,
-              mostNutrientDense: result.best,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const { found, missing } = await requireAtLeastTwo(barcodes);
+      const result = comparisonService.compareNutrientDensity(found);
+      return { ranking: result.ranking, mostNutrientDense: result.best, missing };
     },
   );
 
-  // rankByNutrient
-  server.tool(
+  registerJsonTool(
+    server,
     'rankByNutrient',
-    'Rank products by a specific nutrient (e.g., highest protein, lowest sodium)',
-    rankByNutrientSchema.shape,
+    {
+      title: 'Rank by nutrient',
+      description: 'Rank products by one nutrient per 100 g (e.g. highest protein, lowest sugars). Products without data go last.',
+      inputSchema: z.object({
+        barcodes: barcodeListInput(2, 10).describe('Product barcodes'),
+        nutrient: z.string().trim().min(2).describe('Nutrient id, e.g. protein, fiber, sugars, salt, sodium, saturated_fat, energy_kcal'),
+        ascending: z.boolean().default(true).describe('true = lowest first, false = highest first'),
+      }),
+      outputSchema: z.object({
+        nutrient: z.string(),
+        sortOrder: z.string(),
+        ranking: z.array(z.object({
+          barcode: z.string(),
+          name: z.string(),
+          value: z.number().nullable(),
+          unit: z.string().optional(),
+        })),
+        missing: z.array(z.string()),
+      }),
+    },
     async ({ barcodes, nutrient, ascending }) => {
-      try {
-        const products = await Promise.all(
-          barcodes.map((b) => productService.getByBarcode(b)),
-        );
-
-        const found = products.filter((p) => p !== null);
-        if (found.length < 2) {
-          return {
-            content: [{ type: 'text', text: 'Need at least 2 valid products to rank' }],
-            isError: true,
-          };
-        }
-
-        const ranking = comparisonService.rankByNutrient(found, nutrient, ascending);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              nutrient,
-              sortOrder: ascending ? 'lowest first' : 'highest first',
-              ranking,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const { found, missing } = await requireAtLeastTwo(barcodes);
+      return {
+        nutrient,
+        sortOrder: ascending ? 'lowest first' : 'highest first',
+        ranking: comparisonService.rankByNutrient(found, nutrient, ascending),
+        missing,
+      };
     },
   );
-
-  logger.info('Comparison tools registered: compareProducts, findHealthierAlternative, compareNutrientDensity, rankByNutrient');
 }
+

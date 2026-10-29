@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nutri-MCP</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d8dee4; --card: #f6f8fa;
+    --low: #1a7f37; --medium: #9a6700; --high: #cf222e;
+    color-scheme: light dark;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --border: #30363d; --card: #161b22;
+    --low: #3fb950; --medium: #d29922; --high: #f85149;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --border: #30363d; --card: #161b22;
+      --low: #3fb950; --medium: #d29922; --high: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 2px; }
+  .muted { color: var(--muted); }
+  .header { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
+  .header img { width: 84px; height: 84px; object-fit: contain; border-radius: 8px; background: var(--card); flex: none; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--card); font-weight: 600; font-size: 13px; }
+  .grade { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 4px;
+    border-radius: 6px; color: #fff; font-weight: 700; }
+  .g-A, .g-Aplus { background: #038141; } .g-B { background: #85bb2f; } .g-C { background: #fecb02; color: #1f2328; }
+  .g-D { background: #ee8100; } .g-E { background: #e63e11; } .g-F { background: #a01e0b; }
+  .nova-1 { background: #00aa00; } .nova-2 { background: #ffcc00; color: #1f2328; } .nova-3 { background: #ff6600; } .nova-4 { background: #ff0000; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+  .low { background: var(--low); } .medium { background: var(--medium); } .high { background: var(--high); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); }
+  .chip.warn { border-color: var(--high); color: var(--high); }
+  section { margin-top: 16px; }
+  section h2 { font-size: 13px; margin: 0 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .winner { outline: 2px solid var(--low); outline-offset: -2px; }
+  .scroll { overflow-x: auto; }
+  a { color: inherit; }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="app" class="empty">Waiting for data…</div>
+<script>
+(function () {
+  'use strict';
+  var app = document.getElementById('app');
+  var nextId = 1;
+  var pending = {};
+
+  function send(message) { window.parent.postMessage(message, '*'); }
+  function request(method, params) {
+    var id = nextId++;
+    send({ jsonrpc: '2.0', id: id, method: method, params: params });
+    return new Promise(function (resolve, reject) { pending[id] = { resolve: resolve, reject: reject }; });
+  }
+  function notify(method, params) { send({ jsonrpc: '2.0', method: method, params: params || {} }); }
+
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function fmt(n) {
+    if (typeof n !== 'number') return '–';
+    return n >= 100 ? Math.round(n).toString() : (Math.round(n * 10) / 10).toString();
+  }
+  function gradeBadge(label, grade) {
+    if (!grade) return '';
+    var cls = 'g-' + String(grade).replace('+', 'plus');
+    return '<span class="badge">' + esc(label) + ' <span class="grade ' + cls + '">' + esc(grade) + '</span></span>';
+  }
+  function novaBadge(group) {
+    if (!group) return '';
+    return '<span class="badge">NOVA <span class="grade nova-' + group + '">' + group + '</span></span>';
+  }
+  function nutrient(product, id) {
+    var list = product.nutrients || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+  // UK FSA traffic lights per 100 g
+  var LIGHTS = { fat: [3, 17.5], saturated_fat: [1.5, 5], sugars: [5, 22.5], salt: [0.3, 1.5] };
+  function light(id, value) {
+    var t = LIGHTS[id];
+    if (!t || typeof value !== 'number') return '';
+    var level = value <= t[0] ? 'low' : value > t[1] ? 'high' : 'medium';
+    return '<span class="dot ' + level + '" title="' + level + '"></span>';
+  }
+
+  var ROWS = [
+    ['energy_kcal', 'Energy'], ['fat', 'Fat'], ['saturated_fat', '  of which saturates'],
+    ['carbohydrates', 'Carbohydrates'], ['sugars', '  of which sugars'], ['fiber', 'Fiber'],
+    ['protein', 'Protein'], ['salt', 'Salt'], ['sodium', 'Sodium']
+  ];
+
+  function renderProduct(p) {
+    var img = p.images && (p.images.front || p.images.thumbnail);
+    var html = '<div class="header">' + (img ? '<img alt="" src="' + esc(img) + '">' : '') +
+      '<div><h1>' + esc(p.name) + '</h1><div class="muted">' + esc([p.brand, p.quantity].filter(Boolean).join(' · ')) +
+      '</div><div class="muted">' + esc(p.barcode) + (p.url ? ' · <a href="' + esc(p.url) + '" target="_blank" rel="noopener">source</a>' : '') +
+      '</div></div></div>';
+
+    html += '<div class="badges">' + gradeBadge('Nutri-Score', p.nutriScore && p.nutriScore.grade) +
+      gradeBadge('Green-Score', p.greenScore && p.greenScore.grade) + novaBadge(p.novaGroup) + '</div>';
+
+    var rows = '';
+    var serving = p.servingSize && p.servingSize.grams;
+    ROWS.forEach(function (r) {
+      var n = nutrient(p, r[0]);
+      if (!n) return;
+      rows += '<tr><td>' + light(r[0], n.per100g) + esc(r[1]) + '</td><td class="num">' + fmt(n.per100g != null ? n.per100g : n.value) + ' ' + esc(n.unit) +
+        '</td>' + (serving ? '<td class="num">' + fmt(n.perServing) + '</td>' : '') +
+        '<td class="num">' + (n.dailyValuePercent != null ? fmt(n.dailyValuePercent) + '%' : '') + '</td></tr>';
+    });
+    if (rows) {
+      html += '<section><h2>Nutrition</h2><div class="scroll"><table><thead><tr><th></th><th class="num">per 100 g</th>' +
+        (serving ? '<th class="num">per serving (' + fmt(serving) + ' g)</th>' : '') + '<th class="num">% DV</th></tr></thead><tbody>' +
+        rows + '</tbody></table></div></section>';
+    }
+
+    var allergens = (p.allergens || []).map(function (a) { return '<span class="chip warn">' + esc(a.name) + '</span>'; })
+      .concat((p.traces || []).map(function (a) { return '<span class="chip">traces: ' + esc(a.name) + '</span>'; }));
+    html += '<section><h2>Allergens</h2>' + (allergens.length ? '<div class="chips">' + allergens.join('') + '</div>' : '<div class="muted">None declared</div>') + '</section>';
+
+    if (p.ingredientsText) {
+      html += '<section><h2>Ingredients</h2><div>' + esc(p.ingredientsText) + '</div></section>';
+    }
+    html += '<section class="muted">Sources: ' + esc((p.sources || []).join(', ')) + '</section>';
+    return html;
+  }
+
+  function renderComparison(data) {
+    var products = data.products || [];
+    var winner = data.winner && data.winner.barcode;
+    var head = '<tr><th></th>' + products.map(function (p) {
+      return '<th class="' + (p.barcode === winner ? 'winner' : '') + '">' + esc(p.name) + '</th>';
+    }).join('') + '</tr>';
+    function row(label, cell) {
+      return '<tr><td>' + esc(label) + '</td>' + products.map(function (p) { return '<td>' + cell(p) + '</td>'; }).join('') + '</tr>';
+    }
+    var body = row('Nutri-Score', function (p) { return p.nutriScore ? '<span class="grade g-' + esc(p.nutriScore) + '">' + esc(p.nutriScore) + '</span>' : '–'; }) +
+      row('Green-Score', function (p) { return p.greenScore ? '<span class="grade g-' + esc(String(p.greenScore).replace('+', 'plus')) + '">' + esc(p.greenScore) + '</span>' : '–'; }) +
+      row('NOVA', function (p) { return p.novaGroup ? '<span class="grade nova-' + p.novaGroup + '">' + p.novaGroup + '</span>' : '–'; });
+    (data.keyNutrients || []).forEach(function (k) {
+      body += '<tr><td>' + esc(k.name) + ' (' + esc(k.unit) + ')</td>' + products.map(function (p) {
+        var v = k.values[p.barcode];
+        return '<td class="num">' + (v == null ? '–' : fmt(v)) + (k.better === p.barcode ? ' ✓' : '') + '</td>';
+      }).join('') + '</tr>';
+    });
+    return '<h1>Comparison</h1><div class="muted">' + esc(data.summary || '') + '</div>' +
+      '<section><div class="scroll"><table><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div></section>';
+  }
+
+  function render(result) {
+    var data = result && result.structuredContent;
+    if (!data) { app.className = 'empty'; app.textContent = result && result.isError ? 'The tool returned an error.' : 'No data'; return; }
+    app.className = '';
+    if (data.product) app.innerHTML = renderProduct(data.product);
+    else if (data.products) app.innerHTML = renderComparison(data);
+    else { app.className = 'empty'; app.textContent = 'Unsupported result'; }
+    reportSize();
+  }
+
+  function applyContext(ctx) {
+    if (ctx && ctx.theme) document.documentElement.setAttribute('data-theme', ctx.theme);
+  }
+
+  function reportSize() {
+    notify('ui/notifications/size-changed', { height: Math.ceil(document.documentElement.scrollHeight) });
+  }
+
+  window.addEventListener('message', function (event) {
+    var m = event.data;
+    if (!m || m.jsonrpc !== '2.0') return;
+    if (m.id != null && pending[m.id] && !m.method) {
+      var p = pending[m.id]; delete pending[m.id];
+      if (m.error) p.reject(m.error); else p.resolve(m.result);
+      return;
+    }
+    if (m.method === 'ui/notifications/tool-result') render(m.params);
+    else if (m.method === 'ui/notifications/host-context-changed') applyContext(m.params);
+    else if (m.id != null && m.method) send({ jsonrpc: '2.0', id: m.id, result: {} });
+  });
+
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(reportSize).observe(document.body);
+
+  request('ui/initialize', {
+    appInfo: { name: 'nutri-mcp-view', version: '1.0.0' },
+    appCapabilities: {},
+    protocolVersion: '2026-01-26'
+  }).then(function (init) {
+    applyContext(init && init.hostContext);
+    notify('ui/notifications/initialized');
+  }, function () { /* host without MCP Apps support */ });
+
+  // Exposed for local previews: window.nutriRender({ structuredContent: {...} })
+  window.nutriRender = render;
+})();
+</script>
+</body>
+</html>

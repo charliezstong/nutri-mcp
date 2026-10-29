@@ -5,3 +5,4 @@ export { registerComparisonTools } from './comparison/index.js';
 export { registerPriceTools } from './price/index.js';
 export { registerRecipeTools } from './recipe/index.js';
 export { registerInsightsTools } from './insights/index.js';
+export { registerSafetyTools } from './safety/index.js';

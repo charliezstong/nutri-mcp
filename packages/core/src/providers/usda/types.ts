@@ -34,6 +34,9 @@ export type USDADataType =
   | 'Survey (FNDDS)'
   | 'Experimental';
 
+/**
+ * Nutrient as returned by /foods/search (flat shape)
+ */
 export interface USDANutrient {
   nutrientId: number;
   nutrientName: string;
@@ -42,6 +45,21 @@ export interface USDANutrient {
   value: number;
   derivationCode?: string;
   derivationDescription?: string;
+}
+
+/**
+ * Nutrient as returned by /food/{fdcId} and /foods (nested shape)
+ */
+export interface USDAFoodNutrient {
+  type?: string;
+  id?: number;
+  amount?: number;
+  nutrient: {
+    id: number;
+    number?: string;
+    name: string;
+    unitName: string;
+  };
 }
 
 export interface USDALabelNutrients {
@@ -75,7 +93,7 @@ export interface USDAFoodDetailsResponse {
   description: string;
   dataType: USDADataType;
   publicationDate?: string;
-  foodNutrients: USDANutrient[];
+  foodNutrients: (USDANutrient | USDAFoodNutrient)[];
   foodComponents?: unknown[];
   foodAttributes?: unknown[];
   foodPortions?: USDAFoodPortion[];
@@ -85,6 +103,9 @@ export interface USDAFoodDetailsResponse {
   ingredients?: string;
   servingSize?: number;
   servingSizeUnit?: string;
+  packageWeight?: string;
+  brandedFoodCategory?: string;
+  foodCategory?: { description?: string };
 }
 
 export interface USDAFoodPortion {
@@ -106,11 +127,15 @@ export interface USDAFoodPortion {
  */
 export const USDA_NUTRIENT_MAP: Record<number, string> = {
   1008: 'energy_kcal',      // Energy (kcal)
+  2047: 'energy_kcal',      // Energy (Atwater General Factors), Foundation Foods
+  1062: 'energy_kj',        // Energy (kJ)
   1003: 'protein',          // Protein
   1004: 'fat',              // Total lipid (fat)
   1005: 'carbohydrates',    // Carbohydrate, by difference
   1079: 'fiber',            // Fiber, total dietary
-  2000: 'sugars',           // Sugars, total
+  2000: 'sugars',           // Sugars, total including NLEA
+  1063: 'sugars',           // Sugars, Total (Foundation Foods)
+  1235: 'added_sugars',     // Sugars, added
   1258: 'saturated_fat',    // Fatty acids, total saturated
   1257: 'trans_fat',        // Fatty acids, total trans
   1253: 'cholesterol',      // Cholesterol
@@ -120,6 +145,15 @@ export const USDA_NUTRIENT_MAP: Record<number, string> = {
   1092: 'potassium',        // Potassium, K
   1090: 'magnesium',        // Magnesium, Mg
   1095: 'zinc',             // Zinc, Zn
+  1091: 'phosphorus',       // Phosphorus, P
+  1098: 'copper',           // Copper, Cu
+  1101: 'manganese',        // Manganese, Mn
+  1103: 'selenium',         // Selenium, Se
+  1292: 'monounsaturated_fat', // Fatty acids, total monounsaturated
+  1293: 'polyunsaturated_fat', // Fatty acids, total polyunsaturated
+  1057: 'caffeine',         // Caffeine
+  1018: 'alcohol',          // Alcohol, ethyl
+  1051: 'water',            // Water
   1106: 'vitamin_a',        // Vitamin A, RAE
   1162: 'vitamin_c',        // Vitamin C
   1114: 'vitamin_d',        // Vitamin D (D2 + D3)

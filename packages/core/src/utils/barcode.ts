@@ -152,3 +152,29 @@ export function validateBarcode(barcode: string): BarcodeValidationResult {
     normalized: normalizeToEAN13(cleaned) ?? cleaned,
   };
 }
+
+/**
+ * All equivalent GTIN spellings of a barcode (UPC-A, EAN-13, GTIN-14 and the
+ * unpadded form). Data sources disagree on leading zeros: USDA often stores
+ * 14-digit GTINs, Open Food Facts 13-digit EANs, retailers 12-digit UPCs.
+ */
+export function gtinVariants(barcode: string): string[] {
+  const cleaned = barcode.trim();
+  if (!/^\d+$/.test(cleaned)) return [];
+  const core = cleaned.replace(/^0+/, '') || '0';
+  const variants = new Set<string>([cleaned, core]);
+  for (const length of [8, 12, 13, 14]) {
+    if (core.length <= length) {
+      variants.add(core.padStart(length, '0'));
+    }
+  }
+  return [...variants];
+}
+
+/**
+ * Whether two barcodes denote the same GTIN once leading zeros are ignored.
+ */
+export function sameGtin(a: string, b: string): boolean {
+  const strip = (s: string): string => s.trim().replace(/^0+/, '');
+  return /^\d+$/.test(a.trim()) && /^\d+$/.test(b.trim()) && strip(a) === strip(b);
+}

@@ -1,31 +1,31 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
 import { API_URLS } from '../../config/constants.js';
 import { getProductService } from '../../services/product.service.js';
-import { getLogger } from '../../transport/logger.js';
-import { formatErrorForMcp, ProductNotFoundError } from '../../errors/index.js';
+import { fetchJson } from '../../resilience/http.js';
 import {
-  getProductInsightsSchema,
-  getAIQuestionsSchema,
-  qualityCheckSchema,
-} from './schemas.js';
-
-const logger = getLogger().child('insights-tools');
+  barcodeInput,
+  productRef,
+  productRefOutput,
+  registerJsonTool,
+} from '../shared.js';
 
 interface RobotoffInsight {
   id: string;
   type: string;
   barcode: string;
-  value_tag?: string;
-  value?: string;
-  predictor: string;
-  confidence?: number;
+  value_tag?: string | null;
+  value?: string | null;
+  predictor?: string | null;
+  confidence?: number | null;
+  annotation?: number | null;
 }
 
 interface RobotoffQuestion {
   barcode: string;
   type: string;
-  value: string;
-  value_tag: string;
+  value?: string;
+  value_tag?: string;
   question: string;
   insight_id: string;
   insight_type: string;
@@ -34,141 +34,150 @@ interface RobotoffQuestion {
 export function registerInsightsTools(server: McpServer): void {
   const productService = getProductService();
 
-  // getProductInsights
-  server.tool(
+  registerJsonTool(
+    server,
     'getProductInsights',
-    'Get AI-generated insights about a product from Robotoff',
-    getProductInsightsSchema.shape,
-    async ({ barcode }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
+    {
+      title: 'Get product insights',
+      description: 'Machine-learning predictions about a product from Open Food Facts Robotoff (e.g. suggested categories, labels, brands) that are not yet confirmed.',
+      inputSchema: z.object({
+        barcode: barcodeInput,
+        limit: z.number().int().min(1).max(50).default(10),
+      }),
+      outputSchema: z.object({
+        product: productRefOutput,
+        insightCount: z.number(),
+        insights: z.array(z.object({
+          type: z.string(),
+          value: z.string().optional(),
+          confidence: z.number().optional(),
+          predictor: z.string().optional(),
+          status: z.enum(['pending', 'accepted', 'rejected']),
+        })),
+      }),
+    },
+    async ({ barcode, limit }) => {
+      const product = await productService.requireByBarcode(barcode);
+      const url = `${API_URLS.openfoodfacts.robotoff}/insights?barcode=${encodeURIComponent(barcode)}&count=${limit}`;
+      const data = await fetchJson<{ insights?: RobotoffInsight[]; count?: number }>(url, {
+        provider: 'robotoff',
+        timeoutMs: 20_000,
+      });
+      const insights = (data.insights ?? []).filter((i) => i.barcode === barcode).slice(0, limit);
 
-        const url = `${API_URLS.openfoodfacts.robotoff}/insights?barcode=${barcode}`;
-
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`Robotoff API error: ${response.status}`);
-        }
-
-        const data = await response.json() as { insights: RobotoffInsight[]; count: number };
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              insightCount: data.count,
-              insights: data.insights.map((i) => ({
-                type: i.type,
-                value: i.value || i.value_tag,
-                confidence: i.confidence,
-                predictor: i.predictor,
-              })),
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      return {
+        product: productRef(product),
+        insightCount: data.count ?? insights.length,
+        insights: insights.map((i) => ({
+          type: i.type,
+          value: i.value ?? i.value_tag ?? undefined,
+          confidence: typeof i.confidence === 'number' ? Math.round(i.confidence * 1000) / 1000 : undefined,
+          predictor: i.predictor ?? undefined,
+          status: i.annotation === 1 ? 'accepted' as const : i.annotation === 0 ? 'rejected' as const : 'pending' as const,
+        })),
+      };
     },
   );
 
-  // getAIQuestions
-  server.tool(
+  registerJsonTool(
+    server,
     'getAIQuestions',
-    'Get AI-generated questions that need human verification',
-    getAIQuestionsSchema.shape,
-    async ({ barcode, count }) => {
-      try {
-        let url = `${API_URLS.openfoodfacts.robotoff}/questions/random?count=${count}`;
-        if (barcode) {
-          url = `${API_URLS.openfoodfacts.robotoff}/questions?barcode=${barcode}`;
-        }
+    {
+      title: 'Get questions to verify',
+      description: 'Yes/no questions generated by Robotoff that need human verification, for one product or random products. Answering them on openfoodfacts.org improves the database.',
+      inputSchema: z.object({
+        barcode: barcodeInput.optional().describe('Product barcode (omit for random products)'),
+        count: z.number().int().min(1).max(10).default(5),
+        lang: z.string().regex(/^[a-z]{2}$/).default('en').describe('Language of the questions'),
+      }),
+      outputSchema: z.object({
+        questionCount: z.number(),
+        questions: z.array(z.object({
+          barcode: z.string(),
+          question: z.string(),
+          suggestedValue: z.string().optional(),
+          type: z.string(),
+          url: z.string(),
+        })),
+        note: z.string(),
+      }),
+    },
+    async ({ barcode, count, lang }) => {
+      // /questions/{barcode} is product-specific; /questions (no path) ignores a barcode filter
+      const url = barcode
+        ? `${API_URLS.openfoodfacts.robotoff}/questions/${encodeURIComponent(barcode)}?count=${count}&lang=${lang}`
+        : `${API_URLS.openfoodfacts.robotoff}/questions/random?count=${count}&lang=${lang}`;
+      const data = await fetchJson<{ questions?: RobotoffQuestion[] }>(url, { provider: 'robotoff', timeoutMs: 20_000 });
+      const questions = (data.questions ?? []).slice(0, count);
 
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`Robotoff API error: ${response.status}`);
-        }
-
-        const data = await response.json() as { questions: RobotoffQuestion[]; count: number };
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              questionCount: data.count,
-              questions: data.questions.map((q) => ({
-                barcode: q.barcode,
-                question: q.question,
-                suggestedValue: q.value,
-                type: q.insight_type,
-              })),
-              note: 'These are AI-generated suggestions that need human verification',
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      return {
+        questionCount: questions.length,
+        questions: questions.map((q) => ({
+          barcode: q.barcode,
+          question: q.question,
+          suggestedValue: q.value ?? q.value_tag,
+          type: q.insight_type,
+          url: `https://world.openfoodfacts.org/product/${q.barcode}`,
+        })),
+        note: 'AI-generated suggestions; they need human verification before being applied.',
+      };
     },
   );
 
-  // qualityCheck
-  server.tool(
+  registerJsonTool(
+    server,
     'qualityCheck',
-    'Check data quality and completeness for a product',
-    qualityCheckSchema.shape,
+    {
+      title: 'Check data quality',
+      description: 'Check how complete the data for a product is (nutrients, scores, ingredients, allergens, images) and what is missing.',
+      inputSchema: z.object({ barcode: barcodeInput }),
+      outputSchema: z.object({
+        product: productRefOutput,
+        qualityScore: z.number(),
+        checks: z.record(z.string(), z.boolean()),
+        missingData: z.array(z.string()),
+        sources: z.array(z.string()),
+        recommendation: z.string(),
+        contributeUrl: z.string().optional(),
+      }),
+    },
     async ({ barcode }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
+      const product = await productService.requireByBarcode(barcode);
+      const coreNutrients = ['energy_kcal', 'fat', 'saturated_fat', 'carbohydrates', 'sugars', 'protein', 'salt'];
+      const checks: Record<string, boolean> = {
+        hasName: product.name !== 'Unknown Product',
+        hasBrand: !!product.brand,
+        hasCategories: product.categories.length > 0,
+        hasCoreNutrients: coreNutrients.every((id) => product.nutrients.some((n) => n.id === id)),
+        hasNutriScore: !!product.nutriScore,
+        hasGreenScore: !!product.greenScore,
+        hasNovaGroup: !!product.novaGroup,
+        hasIngredients: !!product.ingredientsText,
+        hasAllergenInfo: product.allergens.length > 0 || product.traces.length > 0 || !!product.ingredientsText,
+        hasImages: !!product.images?.front,
+      };
 
-        const checks = {
-          hasName: !!product.name,
-          hasBrand: !!product.brand,
-          hasCategories: product.categories.length > 0,
-          hasNutrients: product.nutrients.length > 0,
-          hasNutriScore: !!product.nutriScore,
-          hasEcoScore: !!product.ecoScore,
-          hasIngredients: !!product.ingredientsText,
-          hasAllergens: product.allergens.length > 0 || product.traces.length > 0,
-          hasImages: !!product.images?.front,
-        };
+      const labels: Record<string, string> = {
+        hasName: 'product name', hasBrand: 'brand', hasCategories: 'categories', hasCoreNutrients: 'core nutrition facts',
+        hasNutriScore: 'Nutri-Score', hasGreenScore: 'Green-Score', hasNovaGroup: 'NOVA group',
+        hasIngredients: 'ingredients', hasAllergenInfo: 'allergen information', hasImages: 'product image',
+      };
+      const passed = Object.values(checks).filter(Boolean).length;
+      const score = Math.round((passed / Object.keys(checks).length) * 100);
 
-        const passed = Object.values(checks).filter(Boolean).length;
-        const total = Object.keys(checks).length;
-        const score = Math.round((passed / total) * 100);
-
-        const missing: string[] = [];
-        if (!checks.hasBrand) missing.push('brand');
-        if (!checks.hasCategories) missing.push('categories');
-        if (!checks.hasNutrients) missing.push('nutritional data');
-        if (!checks.hasNutriScore) missing.push('Nutri-Score');
-        if (!checks.hasIngredients) missing.push('ingredients');
-        if (!checks.hasImages) missing.push('product image');
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              qualityScore: score,
-              checksResult: checks,
-              missingData: missing,
-              recommendation: score < 50
-                ? 'This product has incomplete data. Consider contributing to Open Food Facts.'
-                : score < 80
-                  ? 'Product data is partial. Some information may be missing.'
-                  : 'Product has comprehensive data.',
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      return {
+        product: productRef(product),
+        qualityScore: score,
+        checks,
+        missingData: Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => labels[k]!),
+        sources: product.sources,
+        recommendation: score < 50
+          ? 'Incomplete data. Consider adding photos and information on Open Food Facts.'
+          : score < 80
+            ? 'Partial data. Some information may be missing.'
+            : 'Comprehensive data.',
+        contributeUrl: product.sources.includes('openfoodfacts') ? product.url : undefined,
+      };
     },
   );
-
-  logger.info('Insights tools registered: getProductInsights, getAIQuestions, qualityCheck');
 }

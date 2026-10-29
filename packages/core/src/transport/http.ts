@@ -1,88 +1,114 @@
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createMcpHandler, type McpHttpHandler } from '@modelcontextprotocol/server';
+import { toNodeHandler } from '@modelcontextprotocol/node';
 import { getEnv } from '../config/env.js';
+import { getAllCircuitBreakerStats } from '../resilience/circuit-breaker.js';
+import { getProductService } from '../services/product.service.js';
+import { SERVER_NAME, VERSION } from '../version.js';
 import { getLogger } from './logger.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 
 const logger = getLogger().child('http-transport');
 
-interface SSEClient {
-  id: string;
-  response: ServerResponse;
-}
+const ALLOWED_HEADERS = [
+  'Content-Type', 'Accept', 'Authorization', 'Last-Event-ID',
+  'Mcp-Protocol-Version', 'Mcp-Session-Id', 'Mcp-Method', 'Mcp-Name',
+].join(', ');
+
+const LOCALHOST_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
 /**
- * HTTP/SSE Transport for MCP
+ * Streamable HTTP transport (stateless). Serves both 2025-era clients
+ * (initialize handshake) and 2026-07-28 clients from the same factory.
+ *
+ * Endpoints: POST/GET/DELETE /mcp, GET /health, GET /
  */
 export class HttpTransport {
-  private server: ReturnType<typeof createHttpServer> | null = null;
-  private clients: Map<string, SSEClient> = new Map();
+  private server: Server | null = null;
+  private readonly mcpHandler: McpHttpHandler;
+  private readonly nodeHandler: ReturnType<typeof toNodeHandler>;
+  private readonly allowedOrigins: string[];
 
-  constructor(_mcpServer: McpServer) {
-    // MCP server reference kept for future full protocol implementation
-    void _mcpServer;
+  constructor(factory: () => McpServer) {
+    this.mcpHandler = createMcpHandler(factory, {
+      onerror: (error) => logger.warn('MCP handler error', error),
+    });
+    this.nodeHandler = toNodeHandler(this.mcpHandler, {
+      onerror: (error) => logger.error('MCP request failed', error),
+    });
+    this.allowedOrigins = (getEnv().ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
   }
 
   /**
-   * Start HTTP server
+   * The underlying fetch-style handler (useful for tests and serverless hosts)
    */
-  start(): Promise<void> {
+  get handler(): McpHttpHandler {
+    return this.mcpHandler;
+  }
+
+  start(port = getEnv().HTTP_PORT, host = getEnv().HTTP_HOST): Promise<{ port: number }> {
     return new Promise((resolve, reject) => {
-      const port = getEnv().HTTP_PORT;
-
       this.server = createHttpServer((req, res) => {
-        this.handleRequest(req, res).catch((error) => {
+        this.handleRequest(req, res).catch((error: unknown) => {
           logger.error('Request handling error', error);
-          res.writeHead(500);
-          res.end('Internal Server Error');
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+          }
+          res.end(JSON.stringify({ error: 'Internal Server Error' }));
         });
       });
 
-      this.server.on('error', (error) => {
-        logger.error('HTTP server error', error);
-        reject(error);
-      });
-
-      this.server.listen(port, () => {
-        logger.info(`HTTP server listening on port ${port}`);
-        logger.info(`SSE endpoint: http://localhost:${port}/sse`);
-        logger.info(`MCP endpoint: http://localhost:${port}/mcp`);
-        resolve();
+      this.server.once('error', reject);
+      this.server.listen(port, host, () => {
+        const address = this.server!.address();
+        const actualPort = typeof address === 'object' && address ? address.port : port;
+        logger.info(`HTTP server listening on http://${host}:${actualPort}/mcp`);
+        resolve({ port: actualPort });
       });
     });
   }
 
-  /**
-   * Stop HTTP server
-   */
-  stop(): Promise<void> {
-    return new Promise((resolve) => {
-      // Close all SSE connections
-      for (const client of this.clients.values()) {
-        client.response.end();
-      }
-      this.clients.clear();
-
-      if (this.server) {
-        this.server.close(() => {
-          logger.info('HTTP server stopped');
-          resolve();
-        });
-      } else {
-        resolve();
-      }
+  async stop(): Promise<void> {
+    await this.mcpHandler.close();
+    await new Promise<void>((resolve) => {
+      if (!this.server) return resolve();
+      this.server.close(() => resolve());
+      this.server.closeAllConnections?.();
     });
+    logger.info('HTTP server stopped');
   }
 
   /**
-   * Handle incoming HTTP request
+   * Origins allowed to call the server from a browser. Requests without an
+   * Origin header (CLIs, server-to-server) are always allowed.
    */
+  private isOriginAllowed(origin: string | undefined): boolean {
+    if (!origin) return true;
+    if (this.allowedOrigins.includes('*') || this.allowedOrigins.includes(origin)) return true;
+    return this.allowedOrigins.length === 0 && LOCALHOST_ORIGIN.test(origin);
+  }
+
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const origin = req.headers.origin;
 
-    // CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    // DNS-rebinding protection required by the MCP Streamable HTTP spec
+    if (!this.isOriginAllowed(origin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Origin not allowed: ${origin}` }));
+      return;
+    }
+
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', ALLOWED_HEADERS);
+      res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id, Mcp-Protocol-Version');
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -91,150 +117,37 @@ export class HttpTransport {
     }
 
     switch (url.pathname) {
-      case '/':
-        this.handleRoot(res);
-        break;
-      case '/health':
-        this.handleHealth(res);
-        break;
-      case '/sse':
-        await this.handleSSE(req, res);
-        break;
       case '/mcp':
-        await this.handleMCP(req, res);
-        break;
+        await this.nodeHandler(req, res);
+        return;
+      case '/health':
+        this.json(res, 200, {
+          status: 'healthy',
+          version: VERSION,
+          timestamp: new Date().toISOString(),
+          sources: getProductService().enabledSources(),
+          circuitBreakers: getAllCircuitBreakerStats(),
+        });
+        return;
+      case '/':
+        this.json(res, 200, {
+          name: SERVER_NAME,
+          version: VERSION,
+          transport: 'streamable-http',
+          endpoints: { mcp: '/mcp', health: '/health' },
+        });
+        return;
       default:
-        res.writeHead(404);
-        res.end('Not Found');
+        this.json(res, 404, { error: 'Not Found' });
     }
   }
 
-  /**
-   * Handle root endpoint
-   */
-  private handleRoot(res: ServerResponse): void {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      name: 'nutri-mcp',
-      version: '1.0.0',
-      endpoints: {
-        health: '/health',
-        sse: '/sse',
-        mcp: '/mcp',
-      },
-    }));
-  }
-
-  /**
-   * Handle health check
-   */
-  private handleHealth(res: ServerResponse): void {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      clients: this.clients.size,
-    }));
-  }
-
-  /**
-   * Handle SSE connection
-   */
-  private async handleSSE(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    });
-
-    // Send connection established event
-    res.write(`event: connected\ndata: ${JSON.stringify({ clientId })}\n\n`);
-
-    const client: SSEClient = { id: clientId, response: res };
-    this.clients.set(clientId, client);
-
-    logger.info(`SSE client connected: ${clientId}`);
-
-    // Handle client disconnect
-    req.on('close', () => {
-      this.clients.delete(clientId);
-      logger.info(`SSE client disconnected: ${clientId}`);
-    });
-
-    // Keep connection alive
-    const keepAlive = setInterval(() => {
-      res.write(':keepalive\n\n');
-    }, 30000);
-
-    req.on('close', () => {
-      clearInterval(keepAlive);
-    });
-  }
-
-  /**
-   * Handle MCP JSON-RPC request
-   */
-  private async handleMCP(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method Not Allowed');
-      return;
-    }
-
-    try {
-      const body = await this.readBody(req);
-      const request = JSON.parse(body);
-
-      logger.debug('MCP request received', { method: request.method });
-
-      // For now, return a basic response
-      // Full implementation would route to MCP server
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        jsonrpc: '2.0',
-        id: request.id,
-        result: {
-          message: 'HTTP transport ready. Use SSE for full MCP protocol.',
-        },
-      }));
-    } catch (error) {
-      logger.error('MCP request error', error);
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        jsonrpc: '2.0',
-        error: {
-          code: -32700,
-          message: 'Parse error',
-        },
-      }));
-    }
-  }
-
-  /**
-   * Broadcast event to all SSE clients
-   */
-  broadcast(event: string, data: unknown): void {
-    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const client of this.clients.values()) {
-      client.response.write(message);
-    }
-  }
-
-  /**
-   * Read request body
-   */
-  private readBody(req: IncomingMessage): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      req.on('data', (chunk) => chunks.push(chunk));
-      req.on('end', () => resolve(Buffer.concat(chunks).toString()));
-      req.on('error', reject);
-    });
+  private json(res: ServerResponse, status: number, body: unknown): void {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
   }
 }
 
-export function createHttpTransport(mcpServer: McpServer): HttpTransport {
-  return new HttpTransport(mcpServer);
+export function createHttpTransport(factory: () => McpServer): HttpTransport {
+  return new HttpTransport(factory);
 }

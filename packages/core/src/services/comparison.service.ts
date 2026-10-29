@@ -76,76 +76,62 @@ export class ComparisonService {
   }
 
   /**
-   * Compare by specific nutrient
+   * Rank by a specific nutrient. Products without data for it go last.
    */
   rankByNutrient(
     products: Product[],
     nutrientId: string,
     ascending = true,
-  ): { barcode: string; name: string; value: number }[] {
+  ): { barcode: string; name: string; value: number | null; unit?: string }[] {
     return products
       .map((p) => {
         const nutrient = p.nutrients.find((n) => n.id === nutrientId);
         return {
           barcode: p.barcode,
           name: p.name,
-          value: nutrient?.value ?? 0,
+          value: nutrient?.value ?? null,
+          unit: nutrient?.unit,
         };
       })
-      .sort((a, b) => ascending ? a.value - b.value : b.value - a.value);
+      .sort((a, b) => {
+        if (a.value === null) return 1;
+        if (b.value === null) return -1;
+        return ascending ? a.value - b.value : b.value - a.value;
+      });
   }
 
   /**
-   * Compare nutrients between products
+   * Compare nutrients between products. A product without data for a
+   * nutrient is reported with value null and never "wins" that nutrient.
    */
   private compareNutrients(products: Product[]): NutrientComparison[] {
     const comparisons: NutrientComparison[] = [];
     const nutrientIds = new Set<string>();
+    const lowerIsBetter = ['fat', 'sodium', 'salt', 'saturated_fat', 'trans_fat', 'sugars', 'added_sugars', 'cholesterol', 'energy_kcal', 'energy_kj'];
 
-    // Collect all nutrient IDs
     for (const p of products) {
       for (const n of p.nutrients) {
         nutrientIds.add(n.id);
       }
     }
 
-    // Compare each nutrient
     for (const id of nutrientIds) {
-      const values: { barcode: string; value: number; unit: string }[] = [];
-      let betterBarcode: string | undefined;
-      let betterValue: number | undefined;
-
-      // For these, lower is better
-      const lowerIsBetter = ['sodium', 'saturated_fat', 'sugars', 'cholesterol', 'energy_kcal'];
       const lowerBetter = lowerIsBetter.includes(id);
-
-      for (const p of products) {
+      const values = products.map((p) => {
         const nutrient = p.nutrients.find((n) => n.id === id);
-        const value = nutrient?.value ?? 0;
-        const unit = nutrient?.unit ?? 'g';
+        return { barcode: p.barcode, value: nutrient?.value ?? null, unit: nutrient?.unit ?? '' };
+      });
 
-        values.push({ barcode: p.barcode, value, unit });
-
-        if (betterValue === undefined) {
-          betterValue = value;
-          betterBarcode = p.barcode;
-        } else {
-          const isBetter = lowerBetter ? value < betterValue : value > betterValue;
-          if (isBetter) {
-            betterValue = value;
-            betterBarcode = p.barcode;
-          }
-        }
+      const known = values.filter((v): v is { barcode: string; value: number; unit: string } => v.value !== null);
+      let better: string | undefined;
+      if (known.length >= 2) {
+        const sorted = [...known].sort((a, b) => (lowerBetter ? a.value - b.value : b.value - a.value));
+        // No winner on a tie
+        if (sorted[0]!.value !== sorted[1]!.value) better = sorted[0]!.barcode;
       }
 
-      const nutrient = products[0]?.nutrients.find((n) => n.id === id);
-
-      comparisons.push({
-        nutrientId: id,
-        name: nutrient?.name ?? id,
-        values,
-        better: betterBarcode,
-      });
+      const name = products.flatMap((p) => p.nutrients).find((n) => n.id === id)?.name ?? id;
+      comparisons.push({ nutrientId: id, name, values, better });
     }
 
     return comparisons;
@@ -159,9 +145,9 @@ export class ComparisonService {
       nutriScore: products
         .filter((p) => p.nutriScore)
         .map((p) => ({ barcode: p.barcode, grade: p.nutriScore!.grade })),
-      ecoScore: products
-        .filter((p) => p.ecoScore)
-        .map((p) => ({ barcode: p.barcode, grade: p.ecoScore!.grade })),
+      greenScore: products
+        .filter((p) => p.greenScore)
+        .map((p) => ({ barcode: p.barcode, grade: p.greenScore!.grade })),
       novaGroup: products
         .filter((p) => p.novaGroup)
         .map((p) => ({ barcode: p.barcode, group: p.novaGroup! })),
@@ -176,52 +162,52 @@ export class ComparisonService {
     nutritionComparison: NutrientComparison[],
   ): { barcode: string; reason: string } | null {
     const scores: Record<string, number> = {};
-
-    // Initialize
+    const wins: Record<string, string[]> = {};
     for (const p of products) {
       scores[p.barcode] = 0;
+      wins[p.barcode] = [];
     }
 
-    // Score based on nutrient comparisons
+    // One point per key nutrient (avoids double counting kcal/kJ or salt/sodium)
+    const scored: Record<string, string> = {
+      energy_kcal: 'fewer calories',
+      saturated_fat: 'less saturated fat',
+      sugars: 'less sugar',
+      salt: 'less salt',
+      fiber: 'more fiber',
+      protein: 'more protein',
+    };
     for (const comp of nutritionComparison) {
-      if (comp.better) {
+      const label = scored[comp.nutrientId];
+      if (label && comp.better) {
         scores[comp.better]!++;
+        wins[comp.better]!.push(label);
       }
     }
 
-    // Bonus for better Nutri-Score
-    const nutriScoreOrder = ['A', 'B', 'C', 'D', 'E'];
-    const sortedByNutriScore = [...products]
+    // Nutri-Score bonus only when it can actually be compared
+    const order = ['A', 'B', 'C', 'D', 'E'];
+    const graded = products
       .filter((p) => p.nutriScore)
-      .sort((a, b) => {
-        const aIdx = nutriScoreOrder.indexOf(a.nutriScore!.grade);
-        const bIdx = nutriScoreOrder.indexOf(b.nutriScore!.grade);
-        return aIdx - bIdx;
-      });
-
-    if (sortedByNutriScore.length > 0) {
-      scores[sortedByNutriScore[0]!.barcode]! += 3;
+      .sort((a, b) => order.indexOf(a.nutriScore!.grade) - order.indexOf(b.nutriScore!.grade));
+    const [first, second] = graded;
+    let nutriScoreWinner: string | undefined;
+    if (first && second && first.nutriScore!.grade !== second.nutriScore!.grade) {
+      scores[first.barcode]! += 3;
+      nutriScoreWinner = first.barcode;
     }
 
-    // Find winner
-    let winner: string | null = null;
-    let maxScore = 0;
+    const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+    const [best, runnerUp] = ranked;
+    if (!best || best[1] === 0 || (runnerUp && runnerUp[1] === best[1])) return null;
 
-    for (const [barcode, score] of Object.entries(scores)) {
-      if (score > maxScore) {
-        maxScore = score;
-        winner = barcode;
-      }
-    }
-
-    if (!winner) return null;
-
-    const winnerProduct = products.find((p) => p.barcode === winner);
-    const reason = winnerProduct?.nutriScore
-      ? `Better overall nutrition with Nutri-Score ${winnerProduct.nutriScore.grade}`
-      : 'Better overall nutritional profile';
-
-    return { barcode: winner, reason };
+    const winner = best[0];
+    const product = products.find((p) => p.barcode === winner)!;
+    const reasons = [
+      ...(nutriScoreWinner === winner ? [`better Nutri-Score (${product.nutriScore!.grade})`] : []),
+      ...wins[winner]!,
+    ];
+    return { barcode: winner, reason: `Per 100 g: ${reasons.join(', ')}` };
   }
 
   /**
@@ -233,6 +219,12 @@ export class ComparisonService {
   ): { score: number; improvements: string[] } {
     let score = 0;
     const improvements: string[] = [];
+
+    // Lower NOVA group = less processed
+    if (original.novaGroup && alternative.novaGroup && alternative.novaGroup < original.novaGroup) {
+      score += original.novaGroup - alternative.novaGroup;
+      improvements.push(`Less processed: NOVA ${alternative.novaGroup} vs ${original.novaGroup}`);
+    }
 
     // Compare Nutri-Score
     if (original.nutriScore && alternative.nutriScore) {
@@ -247,7 +239,7 @@ export class ComparisonService {
 
     // Compare key nutrients
     const nutrientComparisons = [
-      { id: 'sodium', name: 'sodium', lowerBetter: true },
+      { id: 'salt', name: 'salt', lowerBetter: true },
       { id: 'saturated_fat', name: 'saturated fat', lowerBetter: true },
       { id: 'sugars', name: 'sugar', lowerBetter: true },
       { id: 'fiber', name: 'fiber', lowerBetter: false },
@@ -255,8 +247,9 @@ export class ComparisonService {
     ];
 
     for (const { id, name, lowerBetter } of nutrientComparisons) {
-      const origValue = original.nutrients.find((n) => n.id === id)?.value ?? 0;
-      const altValue = alternative.nutrients.find((n) => n.id === id)?.value ?? 0;
+      const origValue = original.nutrients.find((n) => n.id === id)?.value;
+      const altValue = alternative.nutrients.find((n) => n.id === id)?.value;
+      if (origValue === undefined || altValue === undefined) continue;
 
       const isBetter = lowerBetter ? altValue < origValue : altValue > origValue;
       const diff = Math.abs(altValue - origValue);
@@ -264,7 +257,7 @@ export class ComparisonService {
       if (isBetter && diff > origValue * 0.1) {
         score++;
         const direction = lowerBetter ? 'Less' : 'More';
-        improvements.push(`${direction} ${name}: ${altValue.toFixed(1)} vs ${origValue.toFixed(1)}`);
+        improvements.push(`${direction} ${name}: ${altValue.toFixed(1)} vs ${origValue.toFixed(1)} per 100 g`);
       }
     }
 
@@ -285,7 +278,7 @@ export class ComparisonService {
     }
 
     const winnerProduct = products.find((p) => p.barcode === winner.barcode);
-    return `Comparison of ${names}: ${winnerProduct?.name ?? 'Unknown'} is the healthier choice. ${winner.reason}`;
+    return `Comparison of ${names}: ${winnerProduct?.name ?? 'Unknown'} is the healthier choice. ${winner.reason}.`;
   }
 }
 

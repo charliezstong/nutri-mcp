@@ -1,6 +1,6 @@
 import { API_URLS } from '../../config/constants.js';
-import { getEnv } from '../../config/env.js';
-import { BaseProvider, type ProviderFeature } from '../base.provider.js';
+import { getEnv, isProviderEnabled } from '../../config/env.js';
+import { BaseProvider, emptyPage, type ProviderFeature } from '../base.provider.js';
 import type { Product, ProductSummary, ProductSearchFilters } from '../../types/product.types.js';
 import type { PaginatedResponse, PaginationParams } from '../../types/common.types.js';
 import { LRUCache } from '../../resilience/cache.js';
@@ -12,35 +12,32 @@ import type {
 import { mapNutritionixProduct, mapNutritionixSearchResult } from './mapper.js';
 
 /**
- * Nutritionix API Client
+ * Nutritionix API Client. Nutritionix no longer offers a public free tier,
+ * so this provider is only active when NUTRITIONIX_APP_ID/KEY are set.
  */
 export class NutritionixProvider extends BaseProvider {
   readonly source = 'nutritionix' as const;
   readonly name = 'Nutritionix';
-  private appId: string | undefined;
-  private appKey: string | undefined;
 
   constructor() {
     super('nutritionix');
-    const env = getEnv();
-    this.appId = env.NUTRITIONIX_APP_ID;
-    this.appKey = env.NUTRITIONIX_APP_KEY;
   }
 
   /**
-   * Check if Nutritionix is configured
+   * Check if Nutritionix is configured and enabled
    */
-  isConfigured(): boolean {
-    return !!this.appId && !!this.appKey;
+  override isConfigured(): boolean {
+    return isProviderEnabled('nutritionix');
   }
 
   /**
    * Get auth headers
    */
   private getHeaders(): Record<string, string> {
+    const env = getEnv();
     return {
-      'x-app-id': this.appId!,
-      'x-app-key': this.appKey!,
+      'x-app-id': env.NUTRITIONIX_APP_ID ?? '',
+      'x-app-key': env.NUTRITIONIX_APP_KEY ?? '',
       'Content-Type': 'application/json',
     };
   }
@@ -59,174 +56,82 @@ export class NutritionixProvider extends BaseProvider {
       return cached.value;
     }
 
-    const url = `${API_URLS.nutritionix.base}/search/item?upc=${barcode}`;
+    const url = `${API_URLS.nutritionix.base}/search/item?upc=${encodeURIComponent(barcode)}`;
+    const data = await this.fetchWithResilience<NutritionixItemResponse>(url, 'all', {
+      allowNotFound: true,
+      init: { headers: this.getHeaders() },
+    });
 
-    try {
-      const response = await fetch(url, {
-        headers: this.getHeaders(),
-      });
+    const food = data?.foods?.[0];
+    if (!food) return null;
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          return null;
-        }
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = (await response.json()) as NutritionixItemResponse;
-
-      if (!data.foods || data.foods.length === 0) {
-        return null;
-      }
-
-      const product = mapNutritionixProduct(data.foods[0]!);
-      this.cache.set(cacheKey, product, 'product');
-      return product;
-    } catch (error) {
-      this.logger.error(`Failed to fetch Nutritionix product: ${barcode}`, error);
-      return null;
-    }
+    const product = mapNutritionixProduct(food);
+    product.barcode = barcode;
+    this.cache.set(cacheKey, product, 'product');
+    return product;
   }
 
   /**
-   * Get product by nix_item_id
-   */
-  async getProductByNixId(nixItemId: string): Promise<Product | null> {
-    if (!this.isConfigured()) {
-      return null;
-    }
-
-    const url = `${API_URLS.nutritionix.base}/search/item?nix_item_id=${nixItemId}`;
-
-    try {
-      const response = await fetch(url, {
-        headers: this.getHeaders(),
-      });
-
-      if (!response.ok) {
-        return null;
-      }
-
-      const data = (await response.json()) as NutritionixItemResponse;
-
-      if (!data.foods || data.foods.length === 0) {
-        return null;
-      }
-
-      return mapNutritionixProduct(data.foods[0]!);
-    } catch (error) {
-      this.logger.error(`Failed to fetch Nutritionix product by ID: ${nixItemId}`, error);
-      return null;
-    }
-  }
-
-  /**
-   * Search products
+   * Search products (branded + common foods)
    */
   async searchProducts(
     filters: ProductSearchFilters,
     pagination: PaginationParams,
   ): Promise<PaginatedResponse<ProductSummary>> {
-    if (!this.isConfigured()) {
-      return {
-        items: [],
-        pagination: {
-          page: pagination.page,
-          pageSize: pagination.pageSize,
-          totalItems: 0,
-          totalPages: 0,
-          hasNext: false,
-          hasPrev: false,
-        },
-        sources: ['nutritionix'],
-      };
-    }
-
     const { query } = filters;
-    if (!query) {
-      return {
-        items: [],
-        pagination: { ...pagination, totalItems: 0, totalPages: 0, hasNext: false, hasPrev: false },
-        sources: ['nutritionix'],
-      };
+    if (!this.isConfigured() || !query) {
+      return emptyPage(pagination, ['nutritionix']);
     }
 
-    const url = `${API_URLS.nutritionix.base}/search/instant?query=${encodeURIComponent(query)}`;
-
-    const cacheKey = LRUCache.makeKey('nix:search', url);
+    const cacheKey = LRUCache.makeKey('nix:search', query, pagination.page, pagination.pageSize);
     const cached = this.cache.get<PaginatedResponse<ProductSummary>>(cacheKey);
     if (cached && !cached.stale) {
       return cached.value;
     }
 
-    try {
-      const response = await fetch(url, {
-        headers: this.getHeaders(),
-      });
+    const url = `${API_URLS.nutritionix.base}/search/instant?query=${encodeURIComponent(query)}`;
+    const data = await this.fetchWithResilience<NutritionixSearchResponse>(url, 'all', {
+      init: { headers: this.getHeaders() },
+    });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+    const allItems = [
+      ...(data.branded ?? []).map((b) => mapNutritionixSearchResult(b, 'branded')),
+      ...(data.common ?? []).map((c) => mapNutritionixSearchResult(c, 'common')),
+    ];
 
-      const data = (await response.json()) as NutritionixSearchResponse;
+    // Nutritionix has no server-side pagination for instant search
+    const start = (pagination.page - 1) * pagination.pageSize;
+    const result: PaginatedResponse<ProductSummary> = {
+      items: allItems.slice(start, start + pagination.pageSize),
+      pagination: {
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+        totalItems: allItems.length,
+        totalPages: Math.ceil(allItems.length / pagination.pageSize),
+        hasNext: start + pagination.pageSize < allItems.length,
+        hasPrev: pagination.page > 1,
+      },
+      sources: ['nutritionix'],
+    };
 
-      const allItems = [
-        ...data.branded.map((b) => mapNutritionixSearchResult(b, 'branded')),
-        ...data.common.map((c) => mapNutritionixSearchResult(c, 'common')),
-      ];
-
-      // Simple pagination (Nutritionix doesn't support server-side pagination well)
-      const start = (pagination.page - 1) * pagination.pageSize;
-      const items = allItems.slice(start, start + pagination.pageSize);
-
-      const result: PaginatedResponse<ProductSummary> = {
-        items,
-        pagination: {
-          page: pagination.page,
-          pageSize: pagination.pageSize,
-          totalItems: allItems.length,
-          totalPages: Math.ceil(allItems.length / pagination.pageSize),
-          hasNext: start + pagination.pageSize < allItems.length,
-          hasPrev: pagination.page > 1,
-        },
-        sources: ['nutritionix'],
-      };
-
-      this.cache.set(cacheKey, result, 'search');
-      return result;
-    } catch (error) {
-      this.logger.error('Nutritionix search failed', { query, error });
-      throw error;
-    }
+    this.cache.set(cacheKey, result, 'search');
+    return result;
   }
 
   /**
-   * Get nutrients for natural language query
+   * Get nutrients for a natural language query ("2 eggs and a slice of toast")
    */
   async getNutrients(query: string): Promise<Product[]> {
     if (!this.isConfigured()) {
       return [];
     }
 
-    const url = `${API_URLS.nutritionix.base}/natural/nutrients`;
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({ query }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = (await response.json()) as NutritionixNutrientsResponse;
-      return data.foods.map(mapNutritionixProduct);
-    } catch (error) {
-      this.logger.error('Nutritionix nutrients query failed', { query, error });
-      return [];
-    }
+    const data = await this.fetchWithResilience<NutritionixNutrientsResponse>(
+      `${API_URLS.nutritionix.base}/natural/nutrients`,
+      'all',
+      { init: { method: 'POST', headers: this.getHeaders(), body: JSON.stringify({ query }) } },
+    );
+    return (data.foods ?? []).map(mapNutritionixProduct);
   }
 
   supports(feature: ProviderFeature): boolean {

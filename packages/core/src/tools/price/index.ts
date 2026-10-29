@@ -1,204 +1,269 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
 import { getProductService } from '../../services/product.service.js';
 import { getPriceService } from '../../services/price.service.js';
-import { getLogger } from '../../transport/logger.js';
-import { formatErrorForMcp } from '../../errors/index.js';
 import {
-  getProductPricesSchema,
-  searchPricesSchema,
-  getPriceStatsSchema,
-  findBestPriceSchema,
-  comparePricesSchema,
-  getRecentPricesSchema,
-} from './schemas.js';
+  barcodeInput,
+  barcodeListInput,
+  countryInput,
+  currencyInput,
+  priceOutput,
+  registerJsonTool,
+} from '../shared.js';
 
-const logger = getLogger().child('price-tools');
+const NOTE = 'Crowdsourced prices from Open Prices (prices.openfoodfacts.org); coverage varies by country and store.';
+
+const currencyStatsOutput = z.object({
+  currency: z.string(),
+  count: z.number(),
+  min: z.number(),
+  max: z.number(),
+  avg: z.number(),
+  median: z.number(),
+  latest: z.object({ price: z.number(), date: z.string() }),
+});
+
+const filterInputs = {
+  currency: currencyInput.optional(),
+  country: countryInput.optional(),
+};
 
 export function registerPriceTools(server: McpServer): void {
   const productService = getProductService();
   const priceService = getPriceService();
 
-  // getProductPrices
-  server.tool(
+  registerJsonTool(
+    server,
     'getProductPrices',
-    'Get crowdsourced prices for a product',
-    getProductPricesSchema.shape,
-    async ({ barcode }) => {
-      try {
-        const prices = await priceService.getProductPrices(barcode);
-        const product = await productService.getByBarcode(barcode);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product?.name ?? barcode,
-              priceCount: prices.length,
-              prices: prices.slice(0, 10), // Limit to 10 most recent
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+    {
+      title: 'Get product prices',
+      description: 'Most recent crowdsourced prices for a product (newest first), with store and location.',
+      inputSchema: z.object({
+        barcode: barcodeInput,
+        ...filterInputs,
+        limit: z.number().int().min(1).max(100).default(20).describe('Maximum number of prices'),
+      }),
+      outputSchema: z.object({
+        barcode: z.string(),
+        count: z.number(),
+        prices: z.array(priceOutput),
+        note: z.string(),
+      }),
+    },
+    async ({ barcode, currency, country, limit }) => {
+      const prices = await priceService.getProductPrices(barcode, { currency, country, limit });
+      return { barcode, count: prices.length, prices, note: NOTE };
     },
   );
 
-  // searchPrices
-  server.tool(
+  registerJsonTool(
+    server,
     'searchPrices',
-    'Search prices with optional filters (country, currency)',
-    searchPricesSchema.shape,
-    async ({ barcode, country, currency }) => {
-      try {
-        const prices = await priceService.searchPrices({ barcode, country, currency });
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              filters: { barcode, country, currency },
-              count: prices.length,
-              prices: prices.slice(0, 20),
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+    {
+      title: 'Search prices',
+      description: 'Search crowdsourced prices by product, currency, country, date and discount status.',
+      inputSchema: z.object({
+        barcode: barcodeInput.optional(),
+        ...filterInputs,
+        discountedOnly: z.boolean().default(false),
+        since: z.iso.date().optional().describe('Only prices on or after this date (YYYY-MM-DD)'),
+        limit: z.number().int().min(1).max(100).default(20),
+      }),
+      outputSchema: z.object({
+        count: z.number(),
+        prices: z.array(priceOutput),
+        note: z.string(),
+      }),
+    },
+    async ({ barcode, currency, country, discountedOnly, since, limit }) => {
+      const prices = await priceService.searchPrices({ barcode, currency, country, discountedOnly, dateFrom: since, limit });
+      return { count: prices.length, prices, note: NOTE };
     },
   );
 
-  // getPriceStats
-  server.tool(
+  registerJsonTool(
+    server,
     'getPriceStats',
-    'Get price statistics (min, max, average, median) for a product',
-    getPriceStatsSchema.shape,
-    async ({ barcode }) => {
-      try {
-        const stats = await priceService.getPriceStats(barcode);
-        const product = await productService.getByBarcode(barcode);
-
-        if (!stats) {
-          return {
-            content: [{
-              type: 'text',
-              text: `No price data available for ${product?.name ?? barcode}`,
-            }],
-          };
-        }
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product?.name ?? barcode,
-              ...stats,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+    {
+      title: 'Get price statistics',
+      description: 'Min, max, average, median and latest price for a product, computed separately for each currency.',
+      inputSchema: z.object({ barcode: barcodeInput, ...filterInputs }),
+      outputSchema: z.object({
+        barcode: z.string(),
+        available: z.boolean(),
+        priceCount: z.number(),
+        byCurrency: z.array(currencyStatsOutput),
+        firstDate: z.string().optional(),
+        lastDate: z.string().optional(),
+        note: z.string(),
+      }),
+    },
+    async ({ barcode, currency, country }) => {
+      const stats = await priceService.getPriceStats(barcode, { currency, country });
+      return stats
+        ? { ...stats, available: true, note: `${NOTE} Statistics use up to the 100 most recent prices.` }
+        : { barcode, available: false, priceCount: 0, byCurrency: [], note: NOTE };
     },
   );
 
-  // findBestPrice
-  server.tool(
+  registerJsonTool(
+    server,
     'findBestPrice',
-    'Find the lowest price for a product',
-    findBestPriceSchema.shape,
-    async ({ barcode }) => {
-      try {
-        const bestPrice = await priceService.findBestPrice(barcode);
-        const product = await productService.getByBarcode(barcode);
-
-        if (!bestPrice) {
-          return {
-            content: [{
-              type: 'text',
-              text: `No price data available for ${product?.name ?? barcode}`,
-            }],
-          };
-        }
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product?.name ?? barcode,
-              bestPrice,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+    {
+      title: 'Find best price',
+      description: 'Lowest recent price for a product in each currency, with the store where it was seen.',
+      inputSchema: z.object({ barcode: barcodeInput, ...filterInputs }),
+      outputSchema: z.object({
+        barcode: z.string(),
+        available: z.boolean(),
+        bestPrices: z.array(priceOutput),
+        note: z.string(),
+      }),
+    },
+    async ({ barcode, currency, country }) => {
+      const bestPrices = await priceService.findBestPrices(barcode, { currency, country });
+      return { barcode, available: bestPrices.length > 0, bestPrices, note: NOTE };
     },
   );
 
-  // comparePrices
-  server.tool(
+  registerJsonTool(
+    server,
     'comparePrices',
-    'Compare prices between multiple products',
-    comparePricesSchema.shape,
-    async ({ barcodes }) => {
-      try {
-        const products = await Promise.all(
-          barcodes.map((b) => productService.getByBarcode(b)),
-        );
-
-        const found = products.filter((p) => p !== null);
-        if (found.length < 2) {
-          return {
-            content: [{ type: 'text', text: 'Need at least 2 valid products to compare prices' }],
-            isError: true,
-          };
-        }
-
-        const comparison = await priceService.comparePrices(found);
-
-        if (!comparison) {
-          return {
-            content: [{ type: 'text', text: 'No price data available for comparison' }],
-          };
-        }
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify(comparison, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
+    {
+      title: 'Compare prices',
+      description: 'Compare median and best prices of several products in one currency, including price per kg/L to find the best value.',
+      inputSchema: z.object({
+        barcodes: barcodeListInput(2, 10).describe('Product barcodes'),
+        currency: currencyInput.optional().describe('Currency to compare in (default: the most common one)'),
+      }),
+      outputSchema: z.object({
+        available: z.boolean(),
+        currency: z.string().optional(),
+        products: z.array(z.looseObject({
+          barcode: z.string(),
+          name: z.string(),
+          bestPrice: priceOutput.nullable(),
+          medianPrice: z.number().nullable(),
+          pricePerKgOrL: z.number().optional(),
+        })),
+        cheapest: z.string().nullable(),
+        bestValue: z.string().nullable(),
+        missing: z.array(z.string()),
+        note: z.string(),
+      }),
+    },
+    async ({ barcodes, currency }) => {
+      const { found, missing } = await productService.getMany(barcodes);
+      if (found.length < 2) {
+        throw new Error(`Need at least 2 known products to compare prices; not found: ${missing.join(', ')}`);
       }
+      const comparison = await priceService.comparePrices(found, currency);
+      return comparison
+        ? { available: true, ...comparison, missing, note: NOTE }
+        : { available: false, products: [], cheapest: null, bestValue: null, missing, note: NOTE };
     },
   );
 
-  // getRecentPrices
-  server.tool(
+  registerJsonTool(
+    server,
     'getRecentPrices',
-    'Get recently added prices from the community',
-    getRecentPricesSchema.shape,
-    async ({ limit }) => {
-      try {
-        const prices = await priceService.getRecentPrices(limit);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              count: prices.length,
-              prices,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+    {
+      title: 'Get recent prices',
+      description: 'Prices most recently added by the Open Prices community, optionally filtered by currency or country.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).default(20),
+        ...filterInputs,
+      }),
+      outputSchema: z.object({ count: z.number(), prices: z.array(priceOutput), note: z.string() }),
+    },
+    async ({ limit, currency, country }) => {
+      const prices = await priceService.getRecentPrices(limit, { currency, country });
+      return { count: prices.length, prices, note: NOTE };
     },
   );
 
-  logger.info('Price tools registered: getProductPrices, searchPrices, getPriceStats, findBestPrice, comparePrices, getRecentPrices');
+  registerJsonTool(
+    server,
+    'getPriceHistory',
+    {
+      title: 'Get price history',
+      description: 'Monthly median price of a product over the last months, per currency, to spot price trends.',
+      inputSchema: z.object({
+        barcode: barcodeInput,
+        months: z.number().int().min(1).max(60).default(12),
+        currency: currencyInput.optional(),
+      }),
+      outputSchema: z.object({
+        barcode: z.string(),
+        months: z.number(),
+        points: z.array(z.object({
+          month: z.string(),
+          currency: z.string(),
+          count: z.number(),
+          median: z.number(),
+          min: z.number(),
+          max: z.number(),
+        })),
+        trend: z.enum(['increasing', 'decreasing', 'stable', 'insufficient_data']),
+        note: z.string(),
+      }),
+    },
+    async ({ barcode, months, currency }) => {
+      const points = await priceService.getPriceHistory(barcode, months, currency);
+      const main = currency ?? points.reduce<Record<string, number>>((acc, p) => {
+        acc[p.currency] = (acc[p.currency] ?? 0) + p.count;
+        return acc;
+      }, {});
+      const mainCurrency = typeof main === 'string'
+        ? main
+        : Object.entries(main).sort((a, b) => b[1] - a[1])[0]?.[0];
+      const series = points.filter((p) => p.currency === mainCurrency);
+
+      let trend: 'increasing' | 'decreasing' | 'stable' | 'insufficient_data' = 'insufficient_data';
+      if (series.length >= 2) {
+        const first = series[0]!.median;
+        const last = series[series.length - 1]!.median;
+        const change = (last - first) / first;
+        trend = change > 0.05 ? 'increasing' : change < -0.05 ? 'decreasing' : 'stable';
+      }
+      return { barcode, months, points, trend, note: NOTE };
+    },
+  );
+
+  registerJsonTool(
+    server,
+    'findDeals',
+    {
+      title: 'Find deals',
+      description: 'Recently reported discounted prices (promotions), optionally for one product, currency or country.',
+      inputSchema: z.object({
+        barcode: barcodeInput.optional(),
+        ...filterInputs,
+        limit: z.number().int().min(1).max(100).default(20),
+      }),
+      outputSchema: z.object({
+        count: z.number(),
+        deals: z.array(z.looseObject({
+          price: priceOutput,
+          savings: z.number().optional(),
+          savingsPercent: z.number().optional(),
+        })),
+        note: z.string(),
+      }),
+    },
+    async ({ barcode, currency, country, limit }) => {
+      const prices = await priceService.searchPrices({ barcode, currency, country, discountedOnly: true, limit });
+      const deals = prices.map((price) => {
+        const before = price.priceWithoutDiscount;
+        return before && before > price.price
+          ? {
+              price,
+              savings: Math.round((before - price.price) * 100) / 100,
+              savingsPercent: Math.round(((before - price.price) / before) * 100),
+            }
+          : { price };
+      });
+      return { count: deals.length, deals, note: NOTE };
+    },
+  );
 }

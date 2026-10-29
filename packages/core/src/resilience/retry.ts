@@ -14,8 +14,11 @@ interface RetryOptions {
  * Check if an error is retryable
  */
 function isRetryableError(error: unknown, statusCodes: number[]): boolean {
-  // Network errors
-  if (error instanceof TypeError && error.message.includes('fetch')) {
+  // Network errors (undici throws TypeError: fetch failed) and timeouts
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
     return true;
   }
 

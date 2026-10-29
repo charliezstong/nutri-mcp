@@ -1,12 +1,12 @@
 /**
  * Data source identifiers
  */
-export type DataSource = 'openfoodfacts' | 'usda' | 'nutritionix' | 'calculated';
+export type DataSource = 'openfoodfacts' | 'usda' | 'nutritionix' | 'openprices' | 'openfda' | 'calculated';
 
 /**
  * Nutrient units
  */
-export type NutrientUnit = 'g' | 'mg' | 'mcg' | 'kcal' | 'kJ' | 'IU' | '%';
+export type NutrientUnit = 'g' | 'mg' | 'mcg' | 'kcal' | 'kJ' | 'IU' | '%' | '% vol';
 
 /**
  * Nutri-Score grades
@@ -14,9 +14,10 @@ export type NutrientUnit = 'g' | 'mg' | 'mcg' | 'kcal' | 'kJ' | 'IU' | '%';
 export type NutriScoreGrade = 'A' | 'B' | 'C' | 'D' | 'E';
 
 /**
- * Eco-Score grades
+ * Green-Score (formerly Eco-Score) grades. The 2025 Green-Score scale adds
+ * A+ and F to the original A-E range.
  */
-export type EcoScoreGrade = 'A' | 'B' | 'C' | 'D' | 'E';
+export type GreenScoreGrade = 'A+' | 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 /**
  * NOVA groups (food processing level)

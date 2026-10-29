@@ -1,4 +1,5 @@
 import { CACHE_CONFIG, CACHE_TTL } from '../config/constants.js';
+import { getEnv } from '../config/env.js';
 
 interface CacheEntry<T> {
   value: T;
@@ -14,10 +15,12 @@ type CacheCategory = keyof typeof CACHE_TTL;
 export class LRUCache {
   private cache: Map<string, CacheEntry<unknown>>;
   private maxSize: number;
+  private enabled: boolean;
 
-  constructor(maxSize: number = CACHE_CONFIG.maxSize) {
+  constructor(maxSize: number = CACHE_CONFIG.maxSize, enabled = true) {
     this.cache = new Map();
     this.maxSize = maxSize;
+    this.enabled = enabled;
   }
 
   /**
@@ -53,6 +56,7 @@ export class LRUCache {
    * Set a value in cache with category-based TTL
    */
   set<T>(key: string, value: T, category: CacheCategory): void {
+    if (!this.enabled) return;
     const ttl = CACHE_TTL[category];
     const now = Date.now();
 
@@ -160,7 +164,7 @@ let cacheInstance: LRUCache | null = null;
 
 export function getCache(): LRUCache {
   if (!cacheInstance) {
-    cacheInstance = new LRUCache();
+    cacheInstance = new LRUCache(getEnv().CACHE_MAX_SIZE, getEnv().ENABLE_CACHING);
   }
   return cacheInstance;
 }

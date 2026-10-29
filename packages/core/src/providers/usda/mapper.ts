@@ -1,34 +1,40 @@
 import type { Product, ProductSummary } from '../../types/product.types.js';
-import type { Nutrient } from '../../types/nutrition.types.js';
-import { DAILY_VALUES } from '../../config/constants.js';
-import type { USDAFoodDetailsResponse, USDAFoodItem, USDANutrient } from './types.js';
+import type { Nutrient, NutrientId } from '../../types/nutrition.types.js';
+import { dailyValuePercent } from '../../services/daily-values.js';
+import { round } from '../../utils/text.js';
+import type { USDAFoodDetailsResponse, USDAFoodItem, USDAFoodNutrient, USDANutrient } from './types.js';
 import { USDA_NUTRIENT_MAP } from './types.js';
 
 /**
  * Map USDA food details to normalized Product
  */
 export function mapUSDAProduct(usda: USDAFoodDetailsResponse): Product {
+  const servingGrams = usda.servingSize && ['g', 'ml'].includes((usda.servingSizeUnit ?? 'g').toLowerCase())
+    ? usda.servingSize
+    : undefined;
+
   return {
     barcode: usda.gtinUpc || '',
     fdcId: String(usda.fdcId),
     name: usda.description,
     brand: usda.brandOwner || usda.brandName,
-    categories: usda.dataType ? [usda.dataType] : [],
+    categories: [usda.brandedFoodCategory ?? usda.foodCategory?.description].filter((c): c is string => !!c),
     labels: [],
-    quantity: usda.servingSize ? `${usda.servingSize} ${usda.servingSizeUnit || 'g'}` : undefined,
+    quantity: usda.packageWeight,
     servingSize: usda.servingSize
       ? {
           amount: usda.servingSize,
           unit: usda.servingSizeUnit || 'g',
-          grams: usda.servingSize,
+          grams: servingGrams,
         }
       : undefined,
-    nutrients: mapUSDANutrients(usda.foodNutrients),
+    nutrients: mapUSDANutrients(usda.foodNutrients, servingGrams),
     ingredientsText: usda.ingredients,
     allergens: [],
     traces: [],
     additives: [],
     countries: ['United States'],
+    url: `https://fdc.nal.usda.gov/food-details/${usda.fdcId}/nutrients`,
     sources: ['usda'],
     lastUpdated: usda.publicationDate ? new Date(usda.publicationDate) : undefined,
     dataQuality: {
@@ -53,24 +59,36 @@ export function mapUSDASearchResult(usda: USDAFoodItem): ProductSummary {
 }
 
 /**
- * Map USDA nutrients to normalized Nutrient array
+ * Map USDA nutrients to normalized Nutrient array. Handles both the flat
+ * search shape and the nested details shape. When two USDA nutrient ids map
+ * to the same standard id (e.g. energy 1008 and 2047), the first one wins.
  */
-function mapUSDANutrients(nutrients: USDANutrient[]): Nutrient[] {
+export function mapUSDANutrients(
+  nutrients: (USDANutrient | USDAFoodNutrient)[] | undefined,
+  servingGrams?: number,
+): Nutrient[] {
   const result: Nutrient[] = [];
+  const seen = new Set<string>();
 
-  for (const n of nutrients) {
-    const standardId = USDA_NUTRIENT_MAP[n.nutrientId];
-    if (!standardId) continue;
+  for (const raw of nutrients ?? []) {
+    const flat = 'nutrient' in raw
+      ? { id: raw.nutrient.id, name: raw.nutrient.name, unitName: raw.nutrient.unitName, value: raw.amount }
+      : { id: raw.nutrientId, name: raw.nutrientName, unitName: raw.unitName, value: raw.value };
 
-    const dailyValue = getDailyValue(standardId);
+    const standardId = USDA_NUTRIENT_MAP[flat.id] as NutrientId | undefined;
+    if (!standardId || seen.has(standardId) || typeof flat.value !== 'number') continue;
+    seen.add(standardId);
 
+    const unit = mapUSDAUnit(flat.unitName);
+    const value = round(flat.value);
     result.push({
-      id: standardId as Nutrient['id'],
-      name: n.nutrientName,
-      value: n.value,
-      unit: mapUSDAUnit(n.unitName),
-      per100g: n.value,
-      dailyValuePercent: dailyValue ? Math.round((n.value / dailyValue) * 100) : undefined,
+      id: standardId,
+      name: flat.name,
+      value,
+      unit,
+      per100g: value,
+      perServing: servingGrams ? round((value * servingGrams) / 100) : undefined,
+      dailyValuePercent: dailyValuePercent(standardId, value, unit),
       source: 'usda',
     });
   }
@@ -84,52 +102,14 @@ function mapUSDANutrients(nutrients: USDANutrient[]): Nutrient[] {
 function mapUSDAUnit(unit: string): Nutrient['unit'] {
   const unitMap: Record<string, Nutrient['unit']> = {
     G: 'g',
-    g: 'g',
     MG: 'mg',
-    mg: 'mg',
     UG: 'mcg',
-    µg: 'mcg',
-    mcg: 'mcg',
+    MCG: 'mcg',
     KCAL: 'kcal',
-    kcal: 'kcal',
-    kJ: 'kJ',
+    KJ: 'kJ',
     IU: 'IU',
   };
-  return unitMap[unit] || 'g';
-}
-
-/**
- * Get daily value for a nutrient
- */
-function getDailyValue(nutrientId: string): number | undefined {
-  const dvMap: Record<string, keyof typeof DAILY_VALUES> = {
-    energy_kcal: 'calories',
-    protein: 'protein',
-    fat: 'totalFat',
-    saturated_fat: 'saturatedFat',
-    carbohydrates: 'totalCarbohydrate',
-    sugars: 'totalSugars',
-    fiber: 'dietaryFiber',
-    sodium: 'sodium',
-    cholesterol: 'cholesterol',
-    calcium: 'calcium',
-    iron: 'iron',
-    potassium: 'potassium',
-    magnesium: 'magnesium',
-    zinc: 'zinc',
-    vitamin_a: 'vitaminA',
-    vitamin_c: 'vitaminC',
-    vitamin_d: 'vitaminD',
-    vitamin_e: 'vitaminE',
-    vitamin_k: 'vitaminK',
-    vitamin_b1: 'thiamin',
-    vitamin_b2: 'riboflavin',
-    vitamin_b3: 'niacin',
-    vitamin_b6: 'vitaminB6',
-    vitamin_b9: 'folate',
-    vitamin_b12: 'vitaminB12',
-  };
-
-  const key = dvMap[nutrientId];
-  return key ? DAILY_VALUES[key] : undefined;
+  // "µg" (micro sign) upper-cases to Greek "ΜG", so normalize it first
+  const normalized = unit.replace(/[µμ]/g, 'u').toUpperCase();
+  return unitMap[normalized] ?? 'g';
 }

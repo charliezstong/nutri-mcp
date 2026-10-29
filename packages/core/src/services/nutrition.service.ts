@@ -5,35 +5,65 @@ import type {
   MacroBreakdown,
   NutritionConcern,
   NutritionBenefit,
+  NutrientId,
 } from '../types/nutrition.types.js';
-import type { NutrientId } from '../types/nutrition.types.js';
+import { TRAFFIC_LIGHTS } from '../config/constants.js';
+import { round } from '../utils/text.js';
+
+export type TrafficLight = 'low' | 'medium' | 'high';
+
+export interface TrafficLights {
+  fat?: TrafficLight;
+  saturated_fat?: TrafficLight;
+  sugars?: TrafficLight;
+  salt?: TrafficLight;
+}
+
+const CONCERN_MESSAGES: Record<keyof typeof TRAFFIC_LIGHTS, string> = {
+  fat: 'High in fat',
+  saturated_fat: 'High in saturated fat, which may raise LDL cholesterol',
+  sugars: 'High in sugars',
+  salt: 'High in salt, which may raise blood pressure',
+};
+
+const BENEFIT_MESSAGES: Partial<Record<NutrientId, string>> = {
+  fiber: 'Source of fiber for digestive health',
+  protein: 'Source of protein',
+  vitamin_a: 'Source of vitamin A',
+  vitamin_c: 'Source of vitamin C',
+  vitamin_d: 'Source of vitamin D',
+  vitamin_e: 'Source of vitamin E',
+  vitamin_b12: 'Source of vitamin B12',
+  vitamin_b9: 'Source of folate',
+  calcium: 'Source of calcium for bone health',
+  iron: 'Source of iron',
+  potassium: 'Source of potassium',
+  magnesium: 'Source of magnesium',
+  zinc: 'Source of zinc',
+};
 
 /**
- * Nutrition Analysis Service
+ * Nutrition Analysis Service. All values are per 100 g / 100 ml.
  */
 export class NutritionService {
   /**
    * Analyze nutrition of a product
    */
-  analyzeProduct(product: Product): NutritionAnalysis {
-    const calories = this.getCalories(product.nutrients);
-    const macros = this.calculateMacros(product.nutrients);
-    const dailyValues = this.calculateDailyValues(product.nutrients);
-    const concerns = this.identifyConcerns(product.nutrients);
-    const benefits = this.identifyBenefits(product.nutrients);
-
+  analyzeProduct(product: Product): NutritionAnalysis & { trafficLights: TrafficLights; basis: string } {
     return {
-      calories,
-      macros,
+      calories: this.getCalories(product.nutrients),
+      macros: this.calculateMacros(product.nutrients),
       nutrients: product.nutrients,
-      dailyValueSummary: dailyValues,
-      concerns,
-      benefits,
+      dailyValueSummary: this.calculateDailyValues(product.nutrients),
+      trafficLights: this.trafficLights(product.nutrients),
+      concerns: this.identifyConcerns(product.nutrients),
+      benefits: this.identifyBenefits(product.nutrients),
+      basis: 'per 100 g / 100 ml; Daily Values from FDA (2,000 kcal diet); traffic lights from UK FSA',
     };
   }
 
   /**
-   * Calculate daily value percentages for all nutrients
+   * Classify nutrients by percent of Daily Value
    */
   calculateDailyValues(nutrients: Nutrient[]): {
     exceeds: NutrientId[];
@@ -49,11 +79,11 @@ export class NutritionService {
       if (percent === undefined) continue;
 
       if (percent > 100) {
-        exceeds.push(n.id as NutrientId);
+        exceeds.push(n.id);
       } else if (percent >= 20) {
-        adequate.push(n.id as NutrientId);
+        adequate.push(n.id);
       } else {
-        low.push(n.id as NutrientId);
+        low.push(n.id);
       }
     }
 
@@ -61,15 +91,17 @@ export class NutritionService {
   }
 
   /**
-   * Get calories from nutrients
+   * Get calories (kcal), deriving them from kJ when needed
    */
   getCalories(nutrients: Nutrient[]): number {
-    const calNutrient = nutrients.find((n) => n.id === 'energy_kcal');
-    return calNutrient?.value ?? 0;
+    const kcal = nutrients.find((n) => n.id === 'energy_kcal')?.value;
+    if (kcal !== undefined) return kcal;
+    const kj = nutrients.find((n) => n.id === 'energy_kj')?.value;
+    return kj !== undefined ? round(kj / 4.184, 0) : 0;
   }
 
   /**
-   * Calculate macro breakdown
+   * Calculate macro breakdown (share of energy from protein, carbs, fat)
    */
   calculateMacros(nutrients: Nutrient[]): MacroBreakdown {
     const protein = this.getNutrientValue(nutrients, 'protein');
@@ -81,179 +113,109 @@ export class NutritionService {
     const fatCals = fat * 9;
     const totalCals = proteinCals + carbsCals + fatCals || 1;
 
+    const part = (grams: number, calories: number) => ({
+      grams,
+      calories: round(calories, 1),
+      percent: Math.round((calories / totalCals) * 100),
+    });
+
     return {
-      protein: {
-        grams: protein,
-        calories: proteinCals,
-        percent: Math.round((proteinCals / totalCals) * 100),
-      },
-      carbs: {
-        grams: carbs,
-        calories: carbsCals,
-        percent: Math.round((carbsCals / totalCals) * 100),
-      },
-      fat: {
-        grams: fat,
-        calories: fatCals,
-        percent: Math.round((fatCals / totalCals) * 100),
-      },
+      protein: part(protein, proteinCals),
+      carbs: part(carbs, carbsCals),
+      fat: part(fat, fatCals),
     };
   }
 
   /**
-   * Calculate nutrient density (nutrients per calorie)
+   * Nutrient density: sum of %DV of beneficial nutrients per 100 kcal
    */
   calculateNutrientDensity(product: Product): number {
     const calories = this.getCalories(product.nutrients);
     if (calories === 0) return 0;
 
-    // Score based on positive nutrients per 100 calories
-    const positiveNutrients = ['fiber', 'protein', 'vitamin_c', 'vitamin_a', 'calcium', 'iron', 'potassium'];
+    const positiveNutrients: NutrientId[] = [
+      'fiber', 'protein', 'vitamin_a', 'vitamin_c', 'vitamin_d', 'calcium', 'iron', 'potassium', 'magnesium',
+    ];
     let score = 0;
 
     for (const id of positiveNutrients) {
       const nutrient = product.nutrients.find((n) => n.id === id);
       if (nutrient?.dailyValuePercent) {
-        score += nutrient.dailyValuePercent;
+        score += Math.min(nutrient.dailyValuePercent, 100);
       }
     }
 
-    // Normalize to per 100 calories
     return Math.round((score / calories) * 100);
   }
 
   /**
-   * Identify nutritional concerns
+   * UK FSA front-of-pack traffic lights (per 100 g, foods)
+   */
+  trafficLights(nutrients: Nutrient[]): TrafficLights {
+    const result: TrafficLights = {};
+    for (const key of Object.keys(TRAFFIC_LIGHTS) as (keyof typeof TRAFFIC_LIGHTS)[]) {
+      const value = nutrients.find((n) => n.id === key)?.per100g
+        ?? (key === 'salt' ? this.saltFromSodium(nutrients) : undefined);
+      if (value === undefined) continue;
+      const { low, high } = TRAFFIC_LIGHTS[key];
+      result[key] = value <= low ? 'low' : value > high ? 'high' : 'medium';
+    }
+    return result;
+  }
+
+  /**
+   * Identify nutritional concerns (FSA "high" thresholds)
    */
   identifyConcerns(nutrients: Nutrient[]): NutritionConcern[] {
+    const lights = this.trafficLights(nutrients);
     const concerns: NutritionConcern[] = [];
 
-    const highThresholds: Record<string, { threshold: number; message: string }> = {
-      sodium: { threshold: 20, message: 'High sodium content may increase blood pressure' },
-      saturated_fat: { threshold: 20, message: 'High saturated fat may increase cholesterol' },
-      sugars: { threshold: 25, message: 'High sugar content' },
-      cholesterol: { threshold: 20, message: 'High cholesterol content' },
-    };
+    for (const [key, light] of Object.entries(lights) as [keyof typeof TRAFFIC_LIGHTS, TrafficLight][]) {
+      if (light !== 'high') continue;
+      const value = nutrients.find((n) => n.id === key)?.per100g ?? this.saltFromSodium(nutrients) ?? 0;
+      concerns.push({
+        nutrient: key,
+        level: value > TRAFFIC_LIGHTS[key].high * 2 ? 'very_high' : 'high',
+        message: `${CONCERN_MESSAGES[key]} (${value} g per 100 g)`,
+      });
+    }
 
-    for (const n of nutrients) {
-      const config = highThresholds[n.id];
-      if (config && n.dailyValuePercent && n.dailyValuePercent >= config.threshold) {
-        concerns.push({
-          nutrient: n.id as NutrientId,
-          level: n.dailyValuePercent >= 40 ? 'very_high' : 'high',
-          message: config.message,
-        });
-      }
+    const trans = nutrients.find((n) => n.id === 'trans_fat')?.per100g;
+    if (trans !== undefined && trans > 0.5) {
+      concerns.push({ nutrient: 'trans_fat', level: 'high', message: `Contains trans fat (${trans} g per 100 g)` });
     }
 
     return concerns;
   }
 
   /**
-   * Identify nutritional benefits
+   * Identify nutritional benefits (FDA: "good source" >= 10% DV, "excellent" >= 20% DV)
    */
   identifyBenefits(nutrients: Nutrient[]): NutritionBenefit[] {
     const benefits: NutritionBenefit[] = [];
 
-    const benefitThresholds: Record<string, { threshold: number; message: string }> = {
-      fiber: { threshold: 15, message: 'Good source of fiber for digestive health' },
-      protein: { threshold: 20, message: 'Good source of protein' },
-      vitamin_c: { threshold: 15, message: 'Good source of vitamin C for immune health' },
-      vitamin_a: { threshold: 15, message: 'Good source of vitamin A for vision health' },
-      calcium: { threshold: 15, message: 'Good source of calcium for bone health' },
-      iron: { threshold: 15, message: 'Good source of iron' },
-      potassium: { threshold: 10, message: 'Good source of potassium' },
-    };
-
     for (const n of nutrients) {
-      const config = benefitThresholds[n.id];
-      if (config && n.dailyValuePercent && n.dailyValuePercent >= config.threshold) {
-        benefits.push({
-          nutrient: n.id as NutrientId,
-          level: n.dailyValuePercent >= 30 ? 'excellent' : 'good',
-          message: config.message,
-        });
-      }
+      const message = BENEFIT_MESSAGES[n.id];
+      if (!message || n.dailyValuePercent === undefined || n.dailyValuePercent < 10) continue;
+      benefits.push({
+        nutrient: n.id,
+        level: n.dailyValuePercent >= 20 ? 'excellent' : 'good',
+        message: `${message} (${n.dailyValuePercent}% DV per 100 g)`,
+      });
     }
 
     return benefits;
   }
 
-  /**
-   * Compare nutrition between products
-   */
-  compareNutrition(products: Product[]): {
-    winner: string | null;
-    comparison: Record<string, { values: Record<string, number>; better: string | null }>;
-  } {
-    if (products.length < 2) {
-      return { winner: null, comparison: {} };
-    }
-
-    const comparison: Record<string, { values: Record<string, number>; better: string | null }> = {};
-    const scores: Record<string, number> = {};
-
-    // Initialize scores
-    for (const p of products) {
-      scores[p.barcode] = 0;
-    }
-
-    // Compare key nutrients
-    const nutrientsToCompare = [
-      { id: 'energy_kcal', lower: true },
-      { id: 'protein', lower: false },
-      { id: 'fiber', lower: false },
-      { id: 'sugars', lower: true },
-      { id: 'sodium', lower: true },
-      { id: 'saturated_fat', lower: true },
-    ];
-
-    for (const { id, lower } of nutrientsToCompare) {
-      const values: Record<string, number> = {};
-      let best: { barcode: string; value: number } | null = null;
-
-      for (const p of products) {
-        const value = this.getNutrientValue(p.nutrients, id);
-        values[p.barcode] = value;
-
-        if (best === null) {
-          best = { barcode: p.barcode, value };
-        } else {
-          const isBetter = lower ? value < best.value : value > best.value;
-          if (isBetter) {
-            best = { barcode: p.barcode, value };
-          }
-        }
-      }
-
-      comparison[id] = {
-        values,
-        better: best?.barcode ?? null,
-      };
-
-      if (best) {
-        scores[best.barcode]!++;
-      }
-    }
-
-    // Determine winner
-    let winner: string | null = null;
-    let maxScore = 0;
-
-    for (const [barcode, score] of Object.entries(scores)) {
-      if (score > maxScore) {
-        maxScore = score;
-        winner = barcode;
-      }
-    }
-
-    return { winner, comparison };
+  private saltFromSodium(nutrients: Nutrient[]): number | undefined {
+    const sodiumMg = nutrients.find((n) => n.id === 'sodium')?.per100g;
+    return sodiumMg === undefined ? undefined : round((sodiumMg / 1000) * 2.5, 3);
   }
 
   /**
    * Get nutrient value by ID
    */
-  private getNutrientValue(nutrients: Nutrient[], id: string): number {
+  getNutrientValue(nutrients: Nutrient[], id: string): number {
     const nutrient = nutrients.find((n) => n.id === id);
     return nutrient?.value ?? 0;
   }

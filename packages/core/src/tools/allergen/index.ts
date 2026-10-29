@@ -1,258 +1,259 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { z } from 'zod';
 import { getProductService } from '../../services/product.service.js';
 import { getAllergenService } from '../../services/allergen.service.js';
-import { getLogger } from '../../transport/logger.js';
-import { formatErrorForMcp, ProductNotFoundError } from '../../errors/index.js';
-import type { AllergenId, DietType } from '../../types/common.types.js';
+import { getAdditiveService } from '../../services/additive.service.js';
 import {
-  checkAllergenSchema,
-  checkMultipleAllergensSchema,
-  checkBig9Schema,
-  checkEU14Schema,
-  getAllAllergensSchema,
-  crossContaminationSchema,
-  checkDietComplianceSchema,
-  getAdditivesInfoSchema,
-} from './schemas.js';
+  allergenCheckOutput,
+  allergenIdInput,
+  allergenOutput,
+  barcodeInput,
+  dietTypeInput,
+  productRef,
+  productRefOutput,
+  registerJsonTool,
+} from '../shared.js';
 
-const logger = getLogger().child('allergen-tools');
+const DISCLAIMER = 'Based on declared label data, which can be incomplete. People with severe allergies should always check the physical package.';
+
+const multiCheckOutput = z.object({
+  product: productRefOutput,
+  overallSafe: z.boolean(),
+  allergensFound: z.array(z.string()),
+  results: z.array(allergenCheckOutput),
+  dataAvailable: z.boolean(),
+  disclaimer: z.string(),
+});
 
 export function registerAllergenTools(server: McpServer): void {
   const productService = getProductService();
   const allergenService = getAllergenService();
+  const additiveService = getAdditiveService();
 
-  // checkAllergen
-  server.tool(
+  const hasAllergenData = (p: { ingredientsText?: string; allergens: unknown[]; traces: unknown[] }): boolean =>
+    !!p.ingredientsText || p.allergens.length > 0 || p.traces.length > 0;
+
+  registerJsonTool(
+    server,
     'checkAllergen',
-    'Check if a product contains a specific allergen',
-    checkAllergenSchema.shape,
+    {
+      title: 'Check allergen',
+      description: 'Check whether a product contains (or may contain traces of) a specific allergen.',
+      inputSchema: z.object({
+        barcode: barcodeInput,
+        allergen: allergenIdInput.describe('Allergen to check'),
+      }),
+      outputSchema: z.object({
+        product: productRefOutput,
+        result: allergenCheckOutput,
+        dataAvailable: z.boolean(),
+        message: z.string(),
+        disclaimer: z.string(),
+      }),
+    },
     async ({ barcode, allergen }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
-
-        const result = allergenService.checkAllergen(product, allergen as AllergenId);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              ...result,
-              message: result.safe
-                ? `${product.name} appears to be free of ${allergen}`
-                : `WARNING: ${product.name} contains ${allergen}`,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const product = await productService.requireByBarcode(barcode);
+      const result = allergenService.checkAllergen(product, allergen);
+      const dataAvailable = hasAllergenData(product);
+      const message = !dataAvailable
+        ? `No ingredient or allergen data for ${product.name}; cannot confirm it is free of ${allergen}`
+        : result.safe
+          ? `${product.name} does not declare ${allergen}`
+          : result.found
+            ? `WARNING: ${product.name} contains ${allergen}${result.note ? ` (${result.note})` : ''}`
+            : `WARNING: ${product.name} may contain traces of ${allergen}`;
+      return { product: productRef(product), result, dataAvailable, message, disclaimer: DISCLAIMER };
     },
   );
 
-  // checkMultipleAllergens
-  server.tool(
+  registerJsonTool(
+    server,
     'checkMultipleAllergens',
-    'Check if a product contains any of the specified allergens',
-    checkMultipleAllergensSchema.shape,
+    {
+      title: 'Check multiple allergens',
+      description: 'Check a product against a list of allergens at once.',
+      inputSchema: z.object({
+        barcode: barcodeInput,
+        allergens: z.array(allergenIdInput).min(1).max(15).describe('Allergens to check'),
+      }),
+      outputSchema: multiCheckOutput,
+    },
     async ({ barcode, allergens }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
-
-        const result = allergenService.checkMultipleAllergens(product, allergens as AllergenId[]);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              overallSafe: result.safe,
-              results: result.results,
-              message: result.safe
-                ? `${product.name} appears safe for your allergen requirements`
-                : `WARNING: ${product.name} contains one or more specified allergens`,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const product = await productService.requireByBarcode(barcode);
+      const result = allergenService.checkMultipleAllergens(product, allergens);
+      return {
+        product: productRef(product),
+        overallSafe: result.safe,
+        allergensFound: result.results.filter((r) => !r.safe).map((r) => r.allergen),
+        results: result.results,
+        dataAvailable: hasAllergenData(product),
+        disclaimer: DISCLAIMER,
+      };
     },
   );
 
-  // checkBig9
-  server.tool(
+  registerJsonTool(
+    server,
     'checkBig9',
-    'Check product against FDA Big 9 allergens (milk, eggs, fish, shellfish, tree nuts, peanuts, wheat, soy, sesame)',
-    checkBig9Schema.shape,
+    {
+      title: 'Check FDA Big 9 allergens',
+      description: 'Check a product against the US FDA "Big 9" major allergens (milk, eggs, fish, crustacean shellfish, tree nuts, peanuts, wheat, soybeans, sesame).',
+      inputSchema: z.object({ barcode: barcodeInput }),
+      outputSchema: multiCheckOutput,
+    },
     async ({ barcode }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
-
-        const result = allergenService.checkBig9(product);
-        const unsafe = result.results.filter((r) => !r.safe);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              overallSafe: result.safe,
-              allergensFound: unsafe.map((r) => r.allergen),
-              fullResults: result.results,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const product = await productService.requireByBarcode(barcode);
+      const result = allergenService.checkBig9(product);
+      return {
+        product: productRef(product),
+        overallSafe: result.safe,
+        allergensFound: result.results.filter((r) => !r.safe).map((r) => r.allergen),
+        results: result.results,
+        dataAvailable: hasAllergenData(product),
+        disclaimer: DISCLAIMER,
+      };
     },
   );
 
-  // checkEU14
-  server.tool(
+  registerJsonTool(
+    server,
     'checkEU14',
-    'Check product against EU 14 major allergens',
-    checkEU14Schema.shape,
+    {
+      title: 'Check EU 14 allergens',
+      description: 'Check a product against the 14 major allergens of EU Regulation 1169/2011.',
+      inputSchema: z.object({ barcode: barcodeInput }),
+      outputSchema: multiCheckOutput,
+    },
     async ({ barcode }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
-
-        const result = allergenService.checkEU14(product);
-        const unsafe = result.results.filter((r) => !r.safe);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              overallSafe: result.safe,
-              allergensFound: unsafe.map((r) => r.allergen),
-              fullResults: result.results,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const product = await productService.requireByBarcode(barcode);
+      const result = allergenService.checkEU14(product);
+      return {
+        product: productRef(product),
+        overallSafe: result.safe,
+        allergensFound: result.results.filter((r) => !r.safe).map((r) => r.allergen),
+        results: result.results,
+        dataAvailable: hasAllergenData(product),
+        disclaimer: DISCLAIMER,
+      };
     },
   );
 
-  // getAllAllergens
-  server.tool(
+  registerJsonTool(
+    server,
     'getAllAllergens',
-    'Get all allergens present in a product (confirmed, may contain, traces)',
-    getAllAllergensSchema.shape,
+    {
+      title: 'Get all allergens',
+      description: 'List every allergen declared for a product: confirmed, "may contain" and traces.',
+      inputSchema: z.object({ barcode: barcodeInput }),
+      outputSchema: z.object({
+        product: productRefOutput,
+        confirmed: z.array(allergenOutput),
+        mayContain: z.array(allergenOutput),
+        traces: z.array(allergenOutput),
+        totalCount: z.number(),
+        dataAvailable: z.boolean(),
+      }),
+    },
     async ({ barcode }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
-
-        const allergens = allergenService.getAllAllergens(product);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              ...allergens,
-              totalCount: allergens.confirmed.length + allergens.mayContain.length + allergens.traces.length,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const product = await productService.requireByBarcode(barcode);
+      const allergens = allergenService.getAllAllergens(product);
+      return {
+        product: productRef(product),
+        ...allergens,
+        totalCount: allergens.confirmed.length + allergens.mayContain.length + allergens.traces.length,
+        dataAvailable: hasAllergenData(product),
+      };
     },
   );
 
-  // getCrossContaminationRisk
-  server.tool(
+  registerJsonTool(
+    server,
     'getCrossContaminationRisk',
-    'Assess cross-contamination risk for a product',
-    crossContaminationSchema.shape,
+    {
+      title: 'Get cross-contamination risk',
+      description: 'Assess cross-contamination risk from trace declarations and "may contain" / shared-facility warnings on the label.',
+      inputSchema: z.object({ barcode: barcodeInput }),
+      outputSchema: z.object({
+        product: productRefOutput,
+        risk: z.enum(['low', 'medium', 'high', 'unknown']),
+        factors: z.array(z.string()),
+        disclaimer: z.string(),
+      }),
+    },
     async ({ barcode }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
-
-        const risk = allergenService.assessCrossContaminationRisk(product);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              ...risk,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const product = await productService.requireByBarcode(barcode);
+      return {
+        product: productRef(product),
+        ...allergenService.assessCrossContaminationRisk(product),
+        disclaimer: DISCLAIMER,
+      };
     },
   );
 
-  // checkDietCompliance
-  server.tool(
+  registerJsonTool(
+    server,
     'checkDietCompliance',
-    'Check if a product complies with a specific diet (vegan, keto, gluten-free, etc.)',
-    checkDietComplianceSchema.shape,
+    {
+      title: 'Check diet compliance',
+      description:
+        'Check whether a product fits a diet (vegan, vegetarian, pescatarian, keto, paleo, gluten_free, dairy_free, low_sodium, low_sugar, halal, kosher). Returns compliant / not_compliant / uncertain with the evidence used.',
+      inputSchema: z.object({
+        barcode: barcodeInput,
+        diet: dietTypeInput.describe('Diet to check'),
+      }),
+      outputSchema: z.object({
+        product: productRefOutput,
+        diet: z.string(),
+        compliant: z.boolean(),
+        verdict: z.enum(['compliant', 'not_compliant', 'uncertain']),
+        violations: z.array(z.string()),
+        warnings: z.array(z.string()),
+        basis: z.array(z.string()),
+        message: z.string(),
+      }),
+    },
     async ({ barcode, diet }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
-
-        const result = allergenService.checkDietCompliance(product, diet as DietType);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              ...result,
-              message: result.compliant
-                ? `${product.name} is compliant with ${diet} diet`
-                : `${product.name} is NOT compliant with ${diet} diet`,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const product = await productService.requireByBarcode(barcode);
+      const result = allergenService.checkDietCompliance(product, diet);
+      const message = result.verdict === 'compliant'
+        ? `${product.name} appears compatible with a ${diet} diet`
+        : result.verdict === 'not_compliant'
+          ? `${product.name} is NOT compatible with a ${diet} diet`
+          : `Not enough data to confirm ${product.name} fits a ${diet} diet`;
+      return { product: productRef(product), ...result, message };
     },
   );
 
-  // getAdditivesInfo
-  server.tool(
+  registerJsonTool(
+    server,
     'getAdditivesInfo',
-    'Get information about additives (E-numbers) in a product',
-    getAdditivesInfoSchema.shape,
+    {
+      title: 'Get additives info',
+      description: 'Additives (E-numbers) in a product with names, functions (e.g. emulsifier, preservative) and EFSA over-exposure risk.',
+      inputSchema: z.object({ barcode: barcodeInput }),
+      outputSchema: z.object({
+        product: productRefOutput,
+        count: z.number(),
+        additives: z.array(z.looseObject({
+          code: z.string(),
+          name: z.string(),
+          riskLevel: z.enum(['low', 'moderate', 'high', 'unknown']),
+          classes: z.array(z.string()),
+        })),
+        highRiskCount: z.number(),
+        novaGroup: z.number().optional(),
+      }),
+    },
     async ({ barcode }) => {
-      try {
-        const product = await productService.getByBarcode(barcode);
-        if (!product) throw new ProductNotFoundError(barcode);
-
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              product: product.name,
-              additives: product.additives,
-              count: product.additives.length,
-              novaGroup: product.novaGroup,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return formatErrorForMcp(error);
-      }
+      const product = await productService.requireByBarcode(barcode);
+      const additives = await additiveService.describe(product.additives);
+      return {
+        product: productRef(product),
+        count: additives.length,
+        additives,
+        highRiskCount: additives.filter((a) => a.riskLevel === 'high').length,
+        novaGroup: product.novaGroup,
+      };
     },
   );
-
-  logger.info('Allergen tools registered: checkAllergen, checkMultipleAllergens, checkBig9, checkEU14, getAllAllergens, getCrossContaminationRisk, checkDietCompliance, getAdditivesInfo');
 }

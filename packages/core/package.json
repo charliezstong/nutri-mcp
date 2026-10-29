@@ -1,10 +1,11 @@
 {
   "name": "nutri-mcp",
-  "version": "1.0.0",
-  "description": "Multi-source nutrition MCP server - Open Food Facts, USDA FoodData Central, and Nutritionix",
+  "version": "0.2.0",
+  "description": "Multi-source nutrition MCP server - Open Food Facts, Open Prices, USDA FoodData Central, Nutritionix and openFDA recalls",
   "author": "NutriMCP Team",
   "license": "MIT",
   "type": "module",
+  "mcpName": "io.github.charliezstong/nutri-mcp",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -12,35 +13,40 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "server.json"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix",
+    "test:live": "LIVE_TESTS=1 vitest run tests/live",
+    "lint": "eslint src/ tests/",
+    "lint:fix": "eslint src/ tests/ --fix",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
+    "inspect": "npx @modelcontextprotocol/inspector@2 node dist/index.js",
+    "pack:mcpb": "node scripts/pack-mcpb.mjs",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.25.1",
-    "zod": "^3.25.0"
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "zod": "^4.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": "^22.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.0.0",
-    "@typescript-eslint/parser": "^8.0.0",
-    "@vitest/coverage-v8": "^3.1.0",
-    "eslint": "^9.0.0",
-    "msw": "^2.7.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.1.0"
+    "@vitest/coverage-v8": "^3.2.0",
+    "eslint": "^9.39.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.0"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -48,22 +54,29 @@
   "keywords": [
     "mcp",
     "model-context-protocol",
+    "mcp-server",
+    "mcp-apps",
     "nutrition",
     "food",
     "open-food-facts",
+    "open-prices",
     "usda",
     "nutritionix",
+    "openfda",
+    "nutri-score",
+    "green-score",
+    "allergens",
     "ai",
     "claude",
     "llm"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nutrimcp/nutri-mcp.git",
+    "url": "git+https://github.com/charliezstong/nutri-mcp.git",
     "directory": "packages/core"
   },
-  "homepage": "https://nutrimcp.com",
+  "homepage": "https://nutri-mcp.com",
   "bugs": {
-    "url": "https://github.com/nutrimcp/nutri-mcp/issues"
+    "url": "https://github.com/charliezstong/nutri-mcp/issues"
   }
 }

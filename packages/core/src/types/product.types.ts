@@ -8,7 +8,7 @@ import type {
   Nutrient,
   ServingSize,
   NutriScore,
-  EcoScore,
+  GreenScore,
 } from './nutrition.types.js';
 
 /**
@@ -30,6 +30,18 @@ export interface Allergen {
   id: AllergenId;
   name: string;
   certainty: 'confirmed' | 'may_contain' | 'traces';
+}
+
+/**
+ * Ingredient analysis computed by Open Food Facts from the ingredient list
+ * (`ingredients_analysis_tags`).
+ */
+export type AnalysisStatus = 'yes' | 'no' | 'maybe' | 'unknown';
+
+export interface IngredientsAnalysis {
+  vegan: AnalysisStatus;
+  vegetarian: AnalysisStatus;
+  palmOilFree: AnalysisStatus;
 }
 
 /**
@@ -67,6 +79,8 @@ export interface Product {
   brand?: string;
   genericName?: string;
   categories: string[];
+  /** Raw Open Food Facts category tags, most specific last (e.g. "en:hazelnut-spreads") */
+  categoryTags?: string[];
   labels: string[];
 
   // Quantity
@@ -78,12 +92,13 @@ export interface Product {
 
   // Scores
   nutriScore?: NutriScore;
-  ecoScore?: EcoScore;
+  greenScore?: GreenScore;
   novaGroup?: NovaGroup;
 
   // Ingredients and allergens
   ingredientsText?: string;
   ingredients?: Ingredient[];
+  ingredientsAnalysis?: IngredientsAnalysis;
   allergens: Allergen[];
   traces: Allergen[];
   additives: Additive[];
@@ -97,6 +112,7 @@ export interface Product {
   images?: ProductImages;
 
   // Metadata
+  url?: string;
   sources: DataSource[];
   lastUpdated?: Date;
   dataQuality: DataQuality;
@@ -112,6 +128,7 @@ export interface ProductSummary {
   categories: string[];
   nutriScoreGrade?: 'A' | 'B' | 'C' | 'D' | 'E';
   novaGroup?: NovaGroup;
+  quantity?: string;
   thumbnail?: string;
   sources: DataSource[];
 }
@@ -151,12 +168,12 @@ export interface ProductComparison {
 export interface NutrientComparison {
   nutrientId: string;
   name: string;
-  values: { barcode: string; value: number; unit: string }[];
+  values: { barcode: string; value: number | null; unit: string }[];
   better?: string;           // barcode of better product
 }
 
 export interface ScoreComparison {
   nutriScore: { barcode: string; grade: string }[];
-  ecoScore: { barcode: string; grade: string }[];
+  greenScore: { barcode: string; grade: string }[];
   novaGroup: { barcode: string; group: number }[];
 }

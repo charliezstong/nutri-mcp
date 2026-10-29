@@ -1,11 +1,25 @@
-import { API_URLS } from '../../config/constants.js';
+import { API_URLS, OFF_API_VERSION } from '../../config/constants.js';
+import { getEnv } from '../../config/env.js';
 import { BaseProvider, type ProviderFeature } from '../base.provider.js';
 import type { Product, ProductSummary, ProductSearchFilters } from '../../types/product.types.js';
 import type { PaginatedResponse, PaginationParams } from '../../types/common.types.js';
 import { LRUCache } from '../../resilience/cache.js';
+import { InvalidBarcodeError } from '../../errors/index.js';
 import { validateBarcode } from '../../utils/barcode.js';
-import { sanitizeSearchQuery, escapeLuceneQuery } from '../../utils/sanitize.js';
+import { sanitizeSearchQuery } from '../../utils/sanitize.js';
+import { toTagSlug } from '../../utils/text.js';
 import { mapOFFProduct, mapOFFSearchResult } from './mapper.js';
+import {
+  OFF_PRODUCT_FIELDS,
+  OFF_SEARCH_FIELDS,
+  type OFFLegacySearchResponse,
+  type OFFProductResponse,
+  type OFFSearchResponse,
+} from './types.js';
+
+export type { OFFProduct } from './types.js';
+
+const NOT_FOUND = Symbol('not-found');
 
 /**
  * Open Food Facts API Client
@@ -18,116 +32,145 @@ export class OpenFoodFactsProvider extends BaseProvider {
     super('openfoodfacts');
   }
 
-  /**
-   * Get product by barcode
-   */
-  async getProductByBarcode(barcode: string): Promise<Product | null> {
-    // Validate barcode
-    const validation = validateBarcode(barcode);
-    if (!validation.valid) {
-      this.logger.warn(`Invalid barcode: ${barcode}`, { error: validation.error });
-      return null;
-    }
-
-    // Check cache
-    const cacheKey = LRUCache.makeKey('off:product', barcode);
-    const cached = this.cache.get<Product>(cacheKey);
-    if (cached && !cached.stale) {
-      this.logger.debug(`Cache hit for barcode: ${barcode}`);
-      return cached.value;
-    }
-
-    // Fetch from API
-    const url = `${API_URLS.openfoodfacts.product}/product/${barcode}`;
-
-    try {
-      const data = await this.fetchWithResilience<OFFProductResponse>(
-        url,
-        'product',
-      );
-
-      if (data.status !== 1 || !data.product) {
-        this.logger.debug(`Product not found: ${barcode}`);
-        return null;
-      }
-
-      const product = mapOFFProduct(data.product);
-
-      // Cache result
-      this.cache.set(cacheKey, product, 'product');
-
-      return product;
-    } catch (error) {
-      this.logger.error(`Failed to fetch product: ${barcode}`, error);
-      throw error;
-    }
+  private get baseUrl(): string {
+    return getEnv().OFF_BASE_URL.replace(/\/+$/, '');
   }
 
   /**
-   * Search products
+   * Get product by barcode. Returns null when the product does not exist.
+   */
+  async getProductByBarcode(barcode: string): Promise<Product | null> {
+    const cleaned = barcode.trim();
+    const validation = validateBarcode(cleaned);
+    if (!/^\d{6,14}$/.test(cleaned)) {
+      throw new InvalidBarcodeError(barcode, validation.error ?? 'Expected 6-14 digits');
+    }
+    if (!validation.valid) {
+      // Store-internal codes often fail check-digit validation but exist in OFF
+      this.logger.debug(`Barcode ${cleaned} failed validation (${validation.error}); querying anyway`);
+    }
+
+    const cacheKey = LRUCache.makeKey('off:product', cleaned);
+    const cached = this.cache.get<Product | typeof NOT_FOUND>(cacheKey);
+    if (cached && !cached.stale) {
+      this.logger.debug(`Cache hit for barcode: ${cleaned}`);
+      return cached.value === NOT_FOUND ? null : cached.value;
+    }
+
+    const url = new URL(`${this.baseUrl}/api/${OFF_API_VERSION}/product/${cleaned}`);
+    url.searchParams.set('fields', OFF_PRODUCT_FIELDS);
+
+    const data = await this.fetchWithResilience<OFFProductResponse>(url.toString(), 'product', {
+      allowNotFound: true,
+    });
+
+    if (!data || data.status === 'failure' || !data.product) {
+      this.logger.debug(`Product not found: ${cleaned}`);
+      this.cache.set(cacheKey, NOT_FOUND, 'notFound');
+      return null;
+    }
+
+    const product = mapOFFProduct({ ...data.product, code: data.product.code ?? data.code ?? cleaned });
+    this.cache.set(cacheKey, product, 'product');
+    return product;
+  }
+
+  /**
+   * Search products with search-a-licious (Elasticsearch-based search),
+   * falling back to the legacy cgi/search.pl endpoint.
    */
   async searchProducts(
     filters: ProductSearchFilters,
     pagination: PaginationParams,
   ): Promise<PaginatedResponse<ProductSummary>> {
-    const { query, brand, category } = filters;
-    const { page, pageSize } = pagination;
-
-    // Build search URL
-    const url = new URL(`${API_URLS.openfoodfacts.legacySearch}`);
-
-    if (query) {
-      url.searchParams.set('search_terms', sanitizeSearchQuery(query));
-    }
-    if (brand) {
-      url.searchParams.set('tagtype_0', 'brands');
-      url.searchParams.set('tag_contains_0', 'contains');
-      url.searchParams.set('tag_0', escapeLuceneQuery(brand));
-    }
-    if (category) {
-      url.searchParams.set('tagtype_1', 'categories');
-      url.searchParams.set('tag_contains_1', 'contains');
-      url.searchParams.set('tag_1', escapeLuceneQuery(category));
-    }
-
-    url.searchParams.set('page', page.toString());
-    url.searchParams.set('page_size', pageSize.toString());
-    url.searchParams.set('json', '1');
-
-    // Check cache
-    const cacheKey = LRUCache.makeKey('off:search', url.toString());
+    const q = buildSearchQuery(filters);
+    const cacheKey = LRUCache.makeKey('off:search', q, pagination.page, pagination.pageSize);
     const cached = this.cache.get<PaginatedResponse<ProductSummary>>(cacheKey);
     if (cached && !cached.stale) {
       return cached.value;
     }
 
+    let result: PaginatedResponse<ProductSummary>;
     try {
-      const data = await this.fetchWithResilience<OFFSearchResponse>(
-        url.toString(),
-        'search',
-      );
-
-      const result: PaginatedResponse<ProductSummary> = {
-        items: (data.products || []).map(mapOFFSearchResult),
-        pagination: {
-          page,
-          pageSize,
-          totalItems: data.count || 0,
-          totalPages: Math.ceil((data.count || 0) / pageSize),
-          hasNext: page * pageSize < (data.count || 0),
-          hasPrev: page > 1,
-        },
-        sources: ['openfoodfacts'],
-      };
-
-      // Cache result
-      this.cache.set(cacheKey, result, 'search');
-
-      return result;
+      result = await this.searchModern(q, pagination);
     } catch (error) {
-      this.logger.error('Search failed', { filters, error });
-      throw error;
+      this.logger.warn('search-a-licious failed, falling back to legacy search', error);
+      result = await this.searchLegacy(filters, pagination);
     }
+
+    this.cache.set(cacheKey, result, 'search');
+    return result;
+  }
+
+  private async searchModern(
+    q: string,
+    { page, pageSize }: PaginationParams,
+  ): Promise<PaginatedResponse<ProductSummary>> {
+    const url = new URL(API_URLS.openfoodfacts.search);
+    if (q) url.searchParams.set('q', q);
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('page_size', String(pageSize));
+    url.searchParams.set('fields', OFF_SEARCH_FIELDS);
+
+    const data = await this.fetchWithResilience<OFFSearchResponse>(url.toString(), 'search');
+    const total = data.count ?? 0;
+
+    return {
+      items: (data.hits ?? []).filter((p) => p.code).map(mapOFFSearchResult),
+      pagination: {
+        page,
+        pageSize,
+        totalItems: total,
+        totalPages: data.page_count ?? Math.ceil(total / pageSize),
+        hasNext: page * pageSize < total,
+        hasPrev: page > 1,
+      },
+      sources: ['openfoodfacts'],
+    };
+  }
+
+  private async searchLegacy(
+    { query, brand, category }: ProductSearchFilters,
+    { page, pageSize }: PaginationParams,
+  ): Promise<PaginatedResponse<ProductSummary>> {
+    const url = new URL(`${this.baseUrl}${API_URLS.openfoodfacts.legacySearchPath}`);
+
+    if (query) {
+      url.searchParams.set('search_terms', sanitizeSearchQuery(query));
+    }
+    let tagIndex = 0;
+    if (brand) {
+      url.searchParams.set(`tagtype_${tagIndex}`, 'brands');
+      url.searchParams.set(`tag_contains_${tagIndex}`, 'contains');
+      url.searchParams.set(`tag_${tagIndex}`, toTagSlug(brand));
+      tagIndex++;
+    }
+    if (category) {
+      url.searchParams.set(`tagtype_${tagIndex}`, 'categories');
+      url.searchParams.set(`tag_contains_${tagIndex}`, 'contains');
+      url.searchParams.set(`tag_${tagIndex}`, category.replace(/^[a-z]{2}:/, ''));
+    }
+
+    url.searchParams.set('page', page.toString());
+    url.searchParams.set('page_size', pageSize.toString());
+    url.searchParams.set('fields', OFF_SEARCH_FIELDS);
+    url.searchParams.set('json', '1');
+
+    const data = await this.fetchWithResilience<OFFLegacySearchResponse>(url.toString(), 'search');
+    const total = data.count || 0;
+
+    return {
+      items: (data.products || []).filter((p) => p.code).map(mapOFFSearchResult),
+      pagination: {
+        page,
+        pageSize,
+        totalItems: total,
+        totalPages: Math.ceil(total / pageSize),
+        hasNext: page * pageSize < total,
+        hasPrev: page > 1,
+      },
+      sources: ['openfoodfacts'],
+    };
   }
 
   /**
@@ -150,54 +193,35 @@ export class OpenFoodFactsProvider extends BaseProvider {
   }
 }
 
-// Open Food Facts API response types
-interface OFFProductResponse {
-  status: number;
-  status_verbose: string;
-  product?: OFFProduct;
-}
+/**
+ * Build a search-a-licious (Lucene-like) query from filters.
+ */
+export function buildSearchQuery({ query, brand, category, nutriScoreMax, novaMax }: ProductSearchFilters): string {
+  const parts: string[] = [];
+  const quote = (value: string): string => `"${value.replace(/["\\]/g, '')}"`;
 
-interface OFFSearchResponse {
-  count: number;
-  page: number;
-  page_size: number;
-  products: OFFProduct[];
-}
+  if (query) {
+    // Strip Lucene operators from free text so user input is treated as words
+    const text = sanitizeSearchQuery(query).replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (text) parts.push(text);
+  }
+  if (brand) {
+    parts.push(`brands_tags:${quote(toTagSlug(brand))}`);
+  }
+  if (category) {
+    const tag = /^[a-z]{2}:/.test(category) ? category.toLowerCase() : `en:${toTagSlug(category)}`;
+    parts.push(`categories_tags:${quote(tag)}`);
+  }
+  if (nutriScoreMax) {
+    const grades = ['a', 'b', 'c', 'd', 'e'];
+    const allowed = grades.slice(0, grades.indexOf(nutriScoreMax.toLowerCase()) + 1);
+    parts.push(`nutriscore_grade:(${allowed.join(' OR ')})`);
+  }
+  if (novaMax) {
+    parts.push(`nova_group:[1 TO ${novaMax}]`);
+  }
 
-// Raw Open Food Facts product (subset of fields)
-export interface OFFProduct {
-  code: string;
-  product_name?: string;
-  brands?: string;
-  generic_name?: string;
-  categories?: string;
-  categories_tags?: string[];
-  labels?: string;
-  labels_tags?: string[];
-  quantity?: string;
-  serving_size?: string;
-  nutriments?: Record<string, number | string>;
-  nutriscore_grade?: string;
-  nutriscore_score?: number;
-  ecoscore_grade?: string;
-  ecoscore_score?: number;
-  nova_group?: number;
-  ingredients_text?: string;
-  allergens?: string;
-  allergens_tags?: string[];
-  traces?: string;
-  traces_tags?: string[];
-  additives_tags?: string[];
-  countries?: string;
-  countries_tags?: string[];
-  packaging?: string;
-  origins?: string;
-  image_url?: string;
-  image_front_url?: string;
-  image_nutrition_url?: string;
-  image_ingredients_url?: string;
-  last_modified_t?: number;
-  completeness?: number;
+  return parts.join(' ');
 }
 
 // Singleton instance
